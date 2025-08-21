@@ -90,15 +90,31 @@ class SemanticAnalyzer(ast.NodeVisitor):
 
     def visit_AnnAssign(self, node):
         var_name = node.target.id
-        type_name = node.annotation.id
         
+        type_name = None
+        if isinstance(node.annotation, ast.Name):
+            type_name = node.annotation.id
+        elif isinstance(node.annotation, ast.Constant) and isinstance(node.annotation.value, str):
+            type_str = node.annotation.value
+            if type_str.startswith('ptr[') and type_str.endswith(']'):
+                type_name = type_str  # Keep the full 'ptr[...]' string as the type
+            else:
+                raise TypeError(f"Invalid string annotation for pointer type: {type_str}")
+        else:
+            raise TypeError("Type annotation must be a name or a pointer string.")
+
         if self.symbol_table.lookup_current_scope(var_name):
             raise NameError(f"Variable '{var_name}' already declared in this scope.")
             
         self.symbol_table.insert(Symbol(var_name, type_name))
         
         if node.value:
-            self.visit(node.value)
+            value_type = self.visit(node.value)
+            # Allow assigning ptr[void] (from malloc) to any other pointer type
+            if value_type == 'ptr[void]' and type_name.startswith('ptr['):
+                pass # This is a valid assignment
+            elif value_type != type_name and not (type_name == 'bool' and value_type == 'int'):
+                raise TypeError(f"Type mismatch assigning to '{var_name}': expected {type_name}, got {value_type}")
 
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load):
@@ -243,6 +259,51 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 if len(node.args) != 1 or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, int):
                     raise TypeError("range() expects exactly one integer argument.")
                 return 'range_object' # A special type to indicate it's a range object
+            elif func_name == 'addr':
+                if len(node.args) != 1 or not isinstance(node.args[0], ast.Name):
+                    raise TypeError("addr() expects a single variable name as an argument.")
+                var_name = node.args[0].id
+                symbol = self.symbol_table.lookup(var_name)
+                if not symbol:
+                    raise NameError(f"Variable '{var_name}' not declared.")
+                return f'ptr[{symbol.type}]'
+            elif func_name == 'deref':
+                if len(node.args) != 1:
+                    raise TypeError("deref() expects a single argument.")
+                ptr_type = self.visit(node.args[0])
+                if not ptr_type.startswith('ptr[') or not ptr_type.endswith(']'):
+                    raise TypeError(f"Cannot dereference non-pointer type: {ptr_type}")
+                return ptr_type[4:-1] # Extract the inner type, e.g., 'int' from 'ptr[int]'
+            elif func_name == 'assign':
+                if len(node.args) != 2:
+                    raise TypeError("assign() expects two arguments: a pointer and a value.")
+                ptr_type = self.visit(node.args[0])
+                if not ptr_type.startswith('ptr[') or not ptr_type.endswith(']'):
+                    raise TypeError(f"First argument to assign() must be a pointer, got {ptr_type}")
+                
+                value_type = self.visit(node.args[1])
+                expected_type = ptr_type[4:-1]
+                if value_type != expected_type:
+                    raise TypeError(f"Type mismatch in assign(): pointer is {ptr_type}, but value is {value_type}")
+                return None # assign does not return a value
+            elif func_name == 'sizeof':
+                if len(node.args) != 1 or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, str):
+                    raise TypeError("sizeof() expects a single string literal argument representing a type.")
+                return 'int' # sizeof always returns an integer
+            elif func_name == 'malloc':
+                if len(node.args) != 1:
+                    raise TypeError("malloc() expects a single integer argument (size).")
+                size_type = self.visit(node.args[0])
+                if size_type != 'int':
+                    raise TypeError(f"Argument to malloc() must be an integer, but got {size_type}.")
+                return 'ptr[void]' # malloc returns a generic pointer
+            elif func_name == 'free':
+                if len(node.args) != 1:
+                    raise TypeError("free() expects a single pointer argument.")
+                arg_type = self.visit(node.args[0])
+                if not arg_type.startswith('ptr['):
+                    raise TypeError(f"Argument to free() must be a pointer, but got {arg_type}.")
+                return None # free does not return a value
             else:
                 # Handle user-defined function calls
                 func_symbol = self.symbol_table.lookup(func_name) # Use lookup for functions as they can be defined before use

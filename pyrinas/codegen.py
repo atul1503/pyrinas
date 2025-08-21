@@ -47,8 +47,17 @@ class CCodeGenerator(ast.NodeVisitor):
 
     def visit_AnnAssign(self, node):
         var_name = node.target.id
-        type_name = node.annotation.id
-        c_type = {'int': 'int', 'float': 'float', 'bool': 'int'}.get(type_name)
+        type_name = None
+        c_type = None
+
+        if isinstance(node.annotation, ast.Name):
+            type_name = node.annotation.id
+        elif isinstance(node.annotation, ast.Constant) and isinstance(node.annotation.value, str):
+            type_name = node.annotation.value
+        else:
+            raise TypeError("Unsupported type annotation for code generation.")
+
+        c_type = self._c_type_from_pyrinas_type(type_name)
         
         # Track the variable type for print statements
         self.local_vars[var_name] = type_name
@@ -184,17 +193,46 @@ class CCodeGenerator(ast.NodeVisitor):
                 format_specifier = '%s'
             elif arg_type == 'bool':
                 format_specifier = '%d'  # booleans are printed as 0/1
+            elif arg_type.startswith('ptr['):
+                format_specifier = '%p' # Pointers are printed as memory addresses
             else:  # int
                 format_specifier = '%d'
             
             self.current_code_list.append(f'{self._indent()}printf("{format_specifier}\\n", {expr_code});')
             return ""
+        elif node.func.id == 'addr':
+            return f'&{self.visit(node.args[0])}'
+        elif node.func.id == 'deref':
+            return f'(*{self.visit(node.args[0])})'
+        elif node.func.id == 'assign':
+            ptr = self.visit(node.args[0])
+            val = self.visit(node.args[1])
+            self.current_code_list.append(f'{self._indent()}*({ptr}) = {val};')
+            return "" # assign is a statement, not an expression
+        elif node.func.id == 'sizeof':
+            type_str = node.args[0].value
+            c_type = self._c_type_from_pyrinas_type(type_str)
+            return f'sizeof({c_type})'
+        elif node.func.id == 'malloc':
+            size = self.visit(node.args[0])
+            return f'malloc({size})'
+        elif node.func.id == 'free':
+            ptr = self.visit(node.args[0])
+            self.current_code_list.append(f'{self._indent()}free({ptr});')
+            return "" # free is a statement, not an expression
         else:
             args_str = ', '.join([self.visit(arg) for arg in node.args])
             return f'{node.func.id}({args_str})'
             
     def visit_Return(self, node):
         self.current_code_list.append(f'{self._indent()}return {self.visit(node.value)};')
+
+    def _c_type_from_pyrinas_type(self, type_str):
+        if type_str.startswith('ptr[') and type_str.endswith(']'):
+            base_type = type_str[4:-1]
+            return self._c_type_from_pyrinas_type(base_type) + '*'
+        else:
+            return {'int': 'int', 'float': 'float', 'bool': 'int'}.get(type_str, type_str)
 
     def _get_preceding_label(self, loop_node):
         # This is a bit of a hack. We need to find the label

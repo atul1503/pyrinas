@@ -38,8 +38,15 @@ class CCodeGenerator(ast.NodeVisitor):
         else:
             self.current_code_list = []
             func_symbol = self.symbol_table.lookup(node.name)
-            return_type = func_symbol.return_type
-            params = [f'{func_symbol.param_types[i]} {arg.arg}' for i, arg in enumerate(node.args.args)]
+            return_type_str = func_symbol.return_type
+            
+            # Handle Result return types
+            if return_type_str.startswith('Result['):
+                return_type = 'Result'
+            else:
+                return_type = self._c_type_from_pyrinas_type(return_type_str)
+                
+            params = [f'{self._c_type_from_pyrinas_type(func_symbol.param_types[i])} {arg.arg}' for i, arg in enumerate(node.args.args)]
             param_str = ', '.join(params)
             self.current_code_list.append(f'{return_type} {node.name}({param_str}) {{')
 
@@ -116,6 +123,34 @@ class CCodeGenerator(ast.NodeVisitor):
         idx = self.visit(node.slice)
         return f'{var}[{idx}]'
 
+    def visit_Match(self, node):
+        subject = self.visit(node.subject)
+        self.current_code_list.append(f'{self._indent()}if ({subject}.type == OK) {{')
+        self.indent_level += 1
+        
+        # Handle the Ok case
+        ok_case = node.cases[0]
+        ok_var_name = ok_case.pattern.name
+        # This is a simplification; we need to know the type of the value
+        self.current_code_list.append(f'{self._indent()}int {ok_var_name} = {subject}.value.int_val;')
+        for stmt in ok_case.body:
+            self.visit(stmt)
+        
+        self.indent_level -= 1
+        self.current_code_list.append(f'{self._indent()}}} else {{')
+        self.indent_level += 1
+
+        # Handle the Err case
+        err_case = node.cases[1]
+        err_var_name = err_case.pattern.name
+        # This is a simplification; we need to know the type of the value
+        self.current_code_list.append(f'{self._indent()}char* {err_var_name} = {subject}.value.str_val;')
+        for stmt in err_case.body:
+            self.visit(stmt)
+
+        self.indent_level -= 1
+        self.current_code_list.append(f'{self._indent()}}}')
+
     def visit_Name(self, node):
         return node.id
         
@@ -125,7 +160,7 @@ class CCodeGenerator(ast.NodeVisitor):
         return str(node.value) if not isinstance(node.value, bool) else ('1' if node.value else '0')
 
     def visit_BinOp(self, node):
-        op_map = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*', ast.Div: '/', ast.Mod: '%'}
+        op_map = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*', ast.Div: '/', ast.Mod: '%', ast.FloorDiv: '/'}
         return f'({self.visit(node.left)} {op_map[type(node.op)]} {self.visit(node.right)})'
 
     def visit_Compare(self, node):
@@ -274,12 +309,34 @@ class CCodeGenerator(ast.NodeVisitor):
             ptr = self.visit(node.args[0])
             self.current_code_list.append(f'{self._indent()}free({ptr});')
             return "" # free is a statement, not an expression
+        elif node.func.id in ('Ok', 'Err'):
+            # These are handled in visit_Return, here we just visit the value
+            return self.visit(node.args[0])
         else:
             args_str = ', '.join([self.visit(arg) for arg in node.args])
             return f'{node.func.id}({args_str})'
             
     def visit_Return(self, node):
-        self.current_code_list.append(f'{self._indent()}return {self.visit(node.value)};')
+        if isinstance(node.value, ast.Call) and getattr(node.value.func, 'id', None) in ('Ok', 'Err'):
+            call = node.value
+            is_ok = call.func.id == 'Ok'
+            val = self.visit(call.args[0])
+
+            # This part is still simplified. We need to know the type of the value
+            # to pick the right field in the union.
+            # For now, we'll make a guess based on the AST node type.
+            val_type = 'int'
+            if isinstance(call.args[0], ast.Constant):
+                if isinstance(call.args[0].value, str):
+                    val_type = 'str'
+
+            if is_ok:
+                self.current_code_list.append(f'{self._indent()}return (Result){{ .type = OK, .value = {{ .int_val = {val} }} }};')
+            else: # is_err
+                self.current_code_list.append(f'{self._indent()}return (Result){{ .type = ERR, .value = {{ .str_val = {val} }} }};')
+        else:
+            return_val = self.visit(node.value)
+            self.current_code_list.append(f'{self._indent()}return {return_val};')
 
     def _c_type_from_pyrinas_type(self, type_str):
         if type_str.startswith('ptr[') and type_str.endswith(']'):

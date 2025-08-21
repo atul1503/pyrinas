@@ -25,6 +25,7 @@ EXAMPLES = [
     ('memory', '255\n'),
     ('arrays', '0\n10\n20\n30\n40\n'),
     ('structs', '10\n20.500000\n10\n30\n'),
+    ('errors', '5\ndivision by zero\n'),
 ]
 
 @pytest.mark.parametrize("example, expected_output", EXAMPLES)

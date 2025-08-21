@@ -51,26 +51,42 @@ class SemanticAnalyzer(ast.NodeVisitor):
         if not main_found:
             raise NameError("main function not found.")
         
-        # First pass: register all function and struct definitions in the global scope
+        # First pass: register all function signatures and struct definitions (without processing bodies)
         for item in node.body:
             if isinstance(item, ast.FunctionDef):
+                # Register function signature without visiting its body
                 func_name = item.name
-                return_type = item.returns.id if isinstance(item.returns, ast.Name) else None
+                
+                # Determine return type
+                return_type = None
+                if item.returns:
+                    if isinstance(item.returns, ast.Name):
+                        return_type = item.returns.id
+                    elif isinstance(item.returns, ast.Tuple) and len(item.returns.elts) == 2:
+                        success_type = getattr(item.returns.elts[0], 'id', 'unknown')
+                        error_type = getattr(item.returns.elts[1], 'id', 'unknown')
+                        return_type = f'Result[{success_type},{error_type}]'
+                
+                # Extract parameter types
                 param_types = []
                 for arg in item.args.args:
                     if not isinstance(arg.annotation, ast.Name):
                         raise TypeError(f"Parameter '{arg.arg}' must have a type annotation.")
                     param_types.append(arg.annotation.id)
                 
+                # Register the function
                 if self.symbol_table.lookup_current_scope(func_name):
                     raise NameError(f"Function '{func_name}' already defined.")
                 self.symbol_table.insert(Symbol(func_name, 'function', param_types=param_types, return_type=return_type))
             elif isinstance(item, ast.ClassDef):
+                # Register struct definition
                 self.visit_ClassDef(item)
-
-        # Second pass: visit all nodes for semantic analysis
+        
+        # Second pass: visit all nodes including function bodies
         for item in node.body:
-            if not isinstance(item, ast.ClassDef): # Don't re-visit class defs
+            if isinstance(item, ast.FunctionDef):
+                self.visit(item)
+            elif not isinstance(item, ast.ClassDef):
                 self.visit(item)
 
     def visit_ClassDef(self, node):
@@ -96,7 +112,15 @@ class SemanticAnalyzer(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node):
         # Set current function return type for return statement validation
-        self.current_function_return_type = node.returns.id if isinstance(node.returns, ast.Name) else None
+        return_type = None
+        if node.returns:
+            if isinstance(node.returns, ast.Name):
+                return_type = node.returns.id
+            elif isinstance(node.returns, ast.Tuple) and len(node.returns.elts) == 2:
+                success_type = getattr(node.returns.elts[0], 'id', 'unknown')
+                error_type = getattr(node.returns.elts[1], 'id', 'unknown')
+                return_type = f'Result[{success_type},{error_type}]'
+        self.current_function_return_type = return_type
 
         # Push a new scope for function parameters and local variables
         self.symbol_table.push_scope()
@@ -223,6 +247,43 @@ class SemanticAnalyzer(ast.NodeVisitor):
         match = re.match(r'array\[(\w+),(\d+)\]', symbol.type)
         return match.group(1) if match else None
 
+    def visit_Match(self, node):
+        subject_type = self.visit(node.subject)
+        if not subject_type.startswith('Result['):
+            raise TypeError(f"Subject of a match statement must be a Result type, but got {subject_type}")
+
+        # Basic validation for now: ensure Ok and Err cases are handled.
+        # A more robust implementation would check for exhaustiveness.
+        has_ok = False
+        has_err = False
+        for case in node.cases:
+            if isinstance(case.pattern, ast.MatchAs) and isinstance(case.pattern.pattern, ast.MatchClass):
+                 class_name = getattr(case.pattern.pattern.cls, 'id', None)
+                 if class_name == 'Ok':
+                     has_ok = True
+                 elif class_name == 'Err':
+                     has_err = True
+
+                 # Analyze the body of the case in a new scope with the captured variable
+                 self.symbol_table.push_scope()
+                 
+                 # Determine the type of the captured variable
+                 import re
+                 match = re.match(r'Result\[(\w+),(\w+)\]', subject_type)
+                 success_type, error_type = match.groups()
+                 captured_var_type = success_type if class_name == 'Ok' else error_type
+                 
+                 captured_var_name = case.pattern.name
+                 self.symbol_table.insert(Symbol(captured_var_name, captured_var_type))
+                 
+                 for stmt in case.body:
+                     self.visit(stmt)
+                 self.symbol_table.pop_scope()
+
+        if not (has_ok and has_err):
+            raise SyntaxError("Match statement must handle both 'Ok' and 'Err' cases.")
+
+
     def visit_BoolOp(self, node):
         # All operands must be boolean
         for value in node.values:
@@ -311,7 +372,25 @@ class SemanticAnalyzer(ast.NodeVisitor):
             raise Exception("Return statement outside of function.")
 
         returned_type = self.visit(node.value)
-        if returned_type != self.current_function_return_type:
+
+        # Handle Result types
+        if self.current_function_return_type.startswith('Result['):
+            import re
+            match = re.match(r'Result\[(\w+),(\w+)\]', self.current_function_return_type)
+            success_type, error_type = match.groups()
+
+            if returned_type.startswith('Ok[') and returned_type.endswith(']'):
+                inner_type = returned_type[3:-1]
+                if inner_type != success_type:
+                    raise TypeError(f"Type mismatch in Ok return: expected {success_type}, got {inner_type}")
+            elif returned_type.startswith('Err[') and returned_type.endswith(']'):
+                inner_type = returned_type[4:-1]
+                if inner_type != error_type:
+                    raise TypeError(f"Type mismatch in Err return: expected {error_type}, got {inner_type}")
+            else:
+                raise TypeError(f"Must return an Ok or Err value from a function with a Result return type.")
+
+        elif returned_type != self.current_function_return_type:
             raise TypeError(f"Return type mismatch: expected {self.current_function_return_type}, got {returned_type}.")
 
     def visit_Constant(self, node):
@@ -383,6 +462,11 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 if not arg_type.startswith('ptr['):
                     raise TypeError(f"Argument to free() must be a pointer, but got {arg_type}.")
                 return None # free does not return a value
+            elif func_name in ('Ok', 'Err'):
+                if len(node.args) != 1:
+                    raise TypeError(f"{func_name}() expects exactly one argument.")
+                inner_type = self.visit(node.args[0])
+                return f'{func_name}[{inner_type}]'
             else:
                 # Handle user-defined function calls
                 func_symbol = self.symbol_table.lookup(func_name) # Use lookup for functions as they can be defined before use

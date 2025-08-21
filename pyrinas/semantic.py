@@ -154,10 +154,9 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 if isinstance(stmt, ast.AnnAssign):
                     # Field declaration
                     field_name = stmt.target.id
-                    if isinstance(stmt.annotation, ast.Name):
-                        field_type = stmt.annotation.id
-                    else:
-                        field_type = "unknown" 
+                    field_type = self._get_type_name(stmt.annotation)
+                    if field_type is None:
+                        field_type = "unknown"
                     fields[field_name] = field_type
                     has_fields = True
                     

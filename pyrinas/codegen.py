@@ -158,7 +158,13 @@ class CCodeGenerator(ast.NodeVisitor):
         for stmt in node.body:
             if isinstance(stmt, ast.AnnAssign):
                 field_name = stmt.target.id
-                field_type_name = stmt.annotation.id
+                # Handle both ast.Name and ast.Constant (string literal) annotations
+                if isinstance(stmt.annotation, ast.Name):
+                    field_type_name = stmt.annotation.id
+                elif isinstance(stmt.annotation, ast.Constant) and isinstance(stmt.annotation.value, str):
+                    field_type_name = stmt.annotation.value
+                else:
+                    field_type_name = 'int'  # Default fallback
                 c_field_type = self._c_type_from_pyrinas_type(field_type_name)
                 self.struct_definitions.append(f'    {c_field_type} {field_name};')
         

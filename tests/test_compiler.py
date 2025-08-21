@@ -39,6 +39,9 @@ EXAMPLES = [
     ('integration_memory_pointers_functions', '14\n255\n'),
     ('interfaces', 'Drawing rectangle\n50\nDrawing circle\n27\n'),
     ('enums', 'Red color selected\nStatus is pending\n0\n1\n2\n3\n'),
+    ('recursion', '120\n8\n3\n2\n1\n'),
+    ('nested_structs', '10\n20\n5\n100\n50\n100\n5\n10\n'),
+    ('simple_recursive_test', '42\n84\n84\n'),
 ]
 
 @pytest.mark.parametrize("example, expected_output", EXAMPLES)

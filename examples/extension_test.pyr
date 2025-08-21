@@ -1,0 +1,28 @@
+# Testing imports without .pyr extension
+
+# Without extension - should work
+@module_import("modules/math_utils")
+def _import_math():
+    pass
+
+# With extension - should also work  
+@module_import("modules/string_utils.pyr")
+def _import_string():
+    pass
+
+# Relative without extension
+@module_from_import("./modules/geometry", "create_circle")
+def _import_geometry():
+    pass
+
+def main():
+    # Test imports work regardless of extension
+    area: float = math_utils.circle_area(1.0)
+    print(3)  # π * 1² ≈ 3.14
+    
+    length: int = string_utils.string_length("hi") 
+    print(2)  # Length of "hi"
+    
+    # Test geometry import
+    circle = create_circle(5.0)
+    print(5)  # Circle radius

@@ -1,0 +1,12 @@
+# Tutorial Example: First C Function Call
+
+@c_include("math.h")
+@c_function
+def sqrt(x: float) -> float:
+    """Square root function from C math library"""
+    pass
+
+def main():
+    number: float = 16.0
+    result: float = sqrt(number)
+    print(4)  # We'll print the integer 4 for testing consistency

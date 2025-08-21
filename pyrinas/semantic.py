@@ -72,6 +72,8 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 if item.returns:
                     if isinstance(item.returns, ast.Name):
                         return_type = item.returns.id
+                    elif isinstance(item.returns, ast.Constant) and isinstance(item.returns.value, str):
+                        return_type = item.returns.value  # Handle string literal annotations like 'ptr[float]'
                     elif isinstance(item.returns, ast.Tuple) and len(item.returns.elts) == 2:
                         success_type = getattr(item.returns.elts[0], 'id', 'unknown')
                         error_type = getattr(item.returns.elts[1], 'id', 'unknown')
@@ -127,6 +129,8 @@ class SemanticAnalyzer(ast.NodeVisitor):
         if node.returns:
             if isinstance(node.returns, ast.Name):
                 return_type = node.returns.id
+            elif isinstance(node.returns, ast.Constant) and isinstance(node.returns.value, str):
+                return_type = node.returns.value  # Handle string literal annotations like 'ptr[float]'
             elif isinstance(node.returns, ast.Tuple) and len(node.returns.elts) == 2:
                 success_type = getattr(node.returns.elts[0], 'id', 'unknown')
                 error_type = getattr(node.returns.elts[1], 'id', 'unknown')
@@ -234,15 +238,18 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 symbol = self.symbol_table.lookup(var_name)
                 
                 if not symbol:
-                    raise NameError(f"Variable '{var_name}' not defined.")
-                    
-                if symbol.immutable:
-                    raise TypeError(f"Cannot reassign immutable variable '{var_name}'.")
-                    
-                # Type check the assignment
-                value_type = self.visit(node.value)
-                if value_type != symbol.type and not (symbol.type == 'bool' and value_type == 'int'):
-                    raise TypeError(f"Type mismatch assigning to '{var_name}': expected {symbol.type}, got {value_type}")
+                    # Variable not declared - infer type from the assigned value
+                    value_type = self.visit(node.value)
+                    # Register the variable with the inferred type
+                    self.symbol_table.insert(Symbol(var_name, value_type))
+                else:
+                    if symbol.immutable:
+                        raise TypeError(f"Cannot reassign immutable variable '{var_name}'.")
+                        
+                    # Type check the assignment
+                    value_type = self.visit(node.value)
+                    if value_type != symbol.type and not (symbol.type == 'bool' and value_type == 'int'):
+                        raise TypeError(f"Type mismatch assigning to '{var_name}': expected {symbol.type}, got {value_type}")
                     
             elif isinstance(target, ast.Subscript):
                 # Handle array/subscript assignments - check if the array itself is immutable
@@ -298,24 +305,39 @@ class SemanticAnalyzer(ast.NodeVisitor):
         return 'bool'
 
     def visit_Attribute(self, node):
-        # This handles expressions like `p1.x`
-        var_name = getattr(node.value, 'id', None)
-        if not var_name:
-            raise NotImplementedError("Attribute access is only supported on simple variables.")
+        # This handles expressions like `p1.x` or `rect.top_left.x`
+        
+        # First, get the type of the object being accessed
+        if isinstance(node.value, ast.Name):
+            # Simple variable access like `p.x`
+            var_name = node.value.id
+            var_symbol = self.symbol_table.lookup(var_name)
+            if not var_symbol:
+                raise NameError(f"Variable '{var_name}' not declared.")
             
-        var_symbol = self.symbol_table.lookup(var_name)
-        if not var_symbol or var_symbol.type != 'struct':
-            # It might be a variable of a struct type, not the struct def itself
-            struct_type_symbol = self.symbol_table.lookup(var_symbol.type)
-            if not struct_type_symbol or struct_type_symbol.type != 'struct':
-                 raise TypeError(f"Variable '{var_name}' is not a struct and has no attributes.")
-            var_symbol = struct_type_symbol
+            # Get the type of the variable
+            if var_symbol.type == 'struct':
+                struct_symbol = var_symbol
+            else:
+                # It's a variable of a struct type
+                struct_symbol = self.symbol_table.lookup(var_symbol.type)
+                if not struct_symbol or struct_symbol.type != 'struct':
+                    raise TypeError(f"Variable '{var_name}' is not a struct and has no attributes.")
+            
+            object_type = var_symbol.type
+        else:
+            # Complex expression like `rect.top_left.x` - recursively get the type
+            object_type = self.visit(node.value)
+            struct_symbol = self.symbol_table.lookup(object_type)
+            if not struct_symbol or struct_symbol.type != 'struct':
+                raise TypeError(f"Expression of type '{object_type}' is not a struct and has no attributes.")
 
         field_name = node.attr
-        if field_name not in var_symbol.fields:
-            raise NameError(f"Struct '{var_symbol.name}' has no field '{field_name}'.")
-            
-        return var_symbol.fields[field_name]
+        if field_name not in struct_symbol.fields:
+            raise NameError(f"Struct '{struct_symbol.name}' has no field '{field_name}'.")
+        
+        # Return the type of the accessed field
+        return struct_symbol.fields[field_name]
 
     def visit_Subscript(self, node):
         var_name = getattr(node.value, 'id', None)
@@ -444,6 +466,18 @@ class SemanticAnalyzer(ast.NodeVisitor):
             if operand_type != 'bool': # Assuming 'bool' type for logical operations
                 raise TypeError(f"Unsupported unary operation 'not' on type {operand_type}")
             return 'bool'
+        elif isinstance(node.op, ast.USub):
+            # Unary minus: -x
+            if operand_type in ('int', 'float'):
+                return operand_type  # -int -> int, -float -> float
+            else:
+                raise TypeError(f"Unsupported unary operation '-' on type {operand_type}")
+        elif isinstance(node.op, ast.UAdd):
+            # Unary plus: +x
+            if operand_type in ('int', 'float'):
+                return operand_type  # +int -> int, +float -> float
+            else:
+                raise TypeError(f"Unsupported unary operation '+' on type {operand_type}")
         else:
             raise NotImplementedError(f"Unary operator {type(node.op).__name__} not implemented.")
 
@@ -488,14 +522,15 @@ class SemanticAnalyzer(ast.NodeVisitor):
             raise TypeError(f"Return type mismatch: expected {self.current_function_return_type}, got {returned_type}.")
 
     def visit_Constant(self, node):
-        if isinstance(node.value, int):
+        # Check bool before int since bool is a subclass of int in Python
+        if isinstance(node.value, bool):
+            return 'bool'
+        elif isinstance(node.value, int):
             return 'int'
         elif isinstance(node.value, float):
             return 'float'
         elif isinstance(node.value, str):
             return 'str'
-        elif isinstance(node.value, bool):
-            return 'bool'
         else:
             raise TypeError(f"Unsupported constant type: {type(node.value).__name__}")
 

@@ -242,6 +242,10 @@ class CCodeGenerator(ast.NodeVisitor):
         for stmt in node.body:
             self.visit(stmt)
         self.indent_level -= 1
+        
+        if label:
+            self.current_code_list.append(f'{self._indent()}{label}_continue:;')
+        
         self.current_code_list.append(f'{self._indent()}}}')
 
         if label:
@@ -263,6 +267,10 @@ class CCodeGenerator(ast.NodeVisitor):
             for stmt in node.body:
                 self.visit(stmt)
             self.indent_level -= 1
+            
+            if label:
+                self.current_code_list.append(f'{self._indent()}{label}_continue:;')
+            
             self.current_code_list.append(f'{self._indent()}}}')
             
             if label:
@@ -397,7 +405,7 @@ class CCodeGenerator(ast.NodeVisitor):
             else:
                 raise TypeError(f"Invalid array type format: {type_str}")
         else:
-            c_type = {'int': 'int', 'float': 'float', 'bool': 'int', 'str': 'char*'}.get(type_str)
+            c_type = {'int': 'int', 'float': 'float', 'bool': 'int', 'str': 'char*', 'void': 'void'}.get(type_str)
             if c_type:
                 return c_type
             # Assume it's a struct type if not a primitive

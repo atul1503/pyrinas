@@ -32,6 +32,11 @@ EXAMPLES = [
     ('integration_functions_arrays', '10\n14\n60\n14\n'),
     ('integration_functions_pointers', '50\n100\n100\n50\n'),
     ('integration_control_flow', '4\n15\n20\n'),
+    ('integration_arrays_structs_functions', '101\n85\n102\n92\n85\n'),
+    ('integration_functions_structs_pointers', '3\n4\n5\n5\n50\n'),
+    ('integration_complex_control_flow', '0\n7\n'),
+    ('integration_kitchen_sink', '48\n1\n5\n2\n30\n'),
+    ('integration_memory_pointers_functions', '14\n255\n'),
 ]
 
 @pytest.mark.parametrize("example, expected_output", EXAMPLES)

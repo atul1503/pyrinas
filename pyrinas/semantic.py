@@ -1,11 +1,13 @@
 import ast
+import re
 
 class Symbol:
-    def __init__(self, name, type, param_types=None, return_type=None):
+    def __init__(self, name, type, param_types=None, return_type=None, fields=None):
         self.name = name
         self.type = type
         self.param_types = param_types
         self.return_type = return_type
+        self.fields = fields # For structs
 
 class SymbolTable:
     def __init__(self):
@@ -49,7 +51,7 @@ class SemanticAnalyzer(ast.NodeVisitor):
         if not main_found:
             raise NameError("main function not found.")
         
-        # First pass: register all function definitions in the global scope
+        # First pass: register all function and struct definitions in the global scope
         for item in node.body:
             if isinstance(item, ast.FunctionDef):
                 func_name = item.name
@@ -63,9 +65,34 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 if self.symbol_table.lookup_current_scope(func_name):
                     raise NameError(f"Function '{func_name}' already defined.")
                 self.symbol_table.insert(Symbol(func_name, 'function', param_types=param_types, return_type=return_type))
+            elif isinstance(item, ast.ClassDef):
+                self.visit_ClassDef(item)
 
         # Second pass: visit all nodes for semantic analysis
-        self.generic_visit(node)
+        for item in node.body:
+            if not isinstance(item, ast.ClassDef): # Don't re-visit class defs
+                self.visit(item)
+
+    def visit_ClassDef(self, node):
+        struct_name = node.name
+        if self.symbol_table.lookup_current_scope(struct_name):
+            raise NameError(f"Type '{struct_name}' already defined.")
+        
+        fields = {}
+        for stmt in node.body:
+            if isinstance(stmt, ast.AnnAssign):
+                field_name = stmt.target.id
+                # This part is simplified; it needs to handle various annotation types
+                if isinstance(stmt.annotation, ast.Name):
+                    field_type = stmt.annotation.id
+                else: # Add more complex type parsing here if needed
+                    field_type = "unknown" 
+                fields[field_name] = field_type
+            # Pass allows empty structs
+            elif not isinstance(stmt, ast.Pass):
+                 raise TypeError("Struct body can only contain annotated assignments or pass.")
+        
+        self.symbol_table.insert(Symbol(struct_name, 'struct', fields=fields))
 
     def visit_FunctionDef(self, node):
         # Set current function return type for return statement validation
@@ -161,6 +188,26 @@ class SemanticAnalyzer(ast.NodeVisitor):
         # Comparison operations always result in a boolean
         return 'bool'
 
+    def visit_Attribute(self, node):
+        # This handles expressions like `p1.x`
+        var_name = getattr(node.value, 'id', None)
+        if not var_name:
+            raise NotImplementedError("Attribute access is only supported on simple variables.")
+            
+        var_symbol = self.symbol_table.lookup(var_name)
+        if not var_symbol or var_symbol.type != 'struct':
+            # It might be a variable of a struct type, not the struct def itself
+            struct_type_symbol = self.symbol_table.lookup(var_symbol.type)
+            if not struct_type_symbol or struct_type_symbol.type != 'struct':
+                 raise TypeError(f"Variable '{var_name}' is not a struct and has no attributes.")
+            var_symbol = struct_type_symbol
+
+        field_name = node.attr
+        if field_name not in var_symbol.fields:
+            raise NameError(f"Struct '{var_symbol.name}' has no field '{field_name}'.")
+            
+        return var_symbol.fields[field_name]
+
     def visit_Subscript(self, node):
         var_name = getattr(node.value, 'id', None)
         symbol = self.symbol_table.lookup(var_name)
@@ -173,7 +220,6 @@ class SemanticAnalyzer(ast.NodeVisitor):
             raise TypeError(f"Array index must be an integer, but got {index_type}.")
             
         # Return the base type of the array
-        import re
         match = re.match(r'array\[(\w+),(\d+)\]', symbol.type)
         return match.group(1) if match else None
 

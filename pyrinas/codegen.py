@@ -5,6 +5,7 @@ class CCodeGenerator(ast.NodeVisitor):
     def __init__(self, symbol_table):
         self.main_code = []
         self.function_definitions = []
+        self.struct_definitions = []
         self.symbol_table = symbol_table
         self.indent_level = 0
         self.current_code_list = None
@@ -15,7 +16,12 @@ class CCodeGenerator(ast.NodeVisitor):
         return "    " * self.indent_level
 
     def visit_Module(self, node):
-        # First, generate code for all functions
+        # First, generate code for all struct definitions
+        for item in node.body:
+            if isinstance(item, ast.ClassDef):
+                self.visit(item)
+
+        # Then, generate code for all functions
         for item in node.body:
             if isinstance(item, ast.FunctionDef) and item.name != 'main':
                 self.visit(item)
@@ -45,6 +51,17 @@ class CCodeGenerator(ast.NodeVisitor):
 
         if node.name != 'main':
             self.function_definitions.extend(self.current_code_list)
+
+    def visit_ClassDef(self, node):
+        struct_name = node.name
+        self.struct_definitions.append(f'struct {struct_name} {{')
+        for stmt in node.body:
+            if isinstance(stmt, ast.AnnAssign):
+                field_name = stmt.target.id
+                field_type_name = stmt.annotation.id # Simplified
+                c_field_type = self._c_type_from_pyrinas_type(field_type_name)
+                self.struct_definitions.append(f'    {c_field_type} {field_name};')
+        self.struct_definitions.append('};')
 
     def visit_AnnAssign(self, node):
         var_name = node.target.id
@@ -88,6 +105,11 @@ class CCodeGenerator(ast.NodeVisitor):
         target = self.visit(node.targets[0])
         value = self.visit(node.value)
         self.current_code_list.append(f'{self._indent()}{target} = {value};')
+
+    def visit_Attribute(self, node):
+        var = self.visit(node.value)
+        attr = node.attr
+        return f'{var}.{attr}'
 
     def visit_Subscript(self, node):
         var = self.visit(node.value)
@@ -197,6 +219,16 @@ class CCodeGenerator(ast.NodeVisitor):
                 # It's a variable, look it up in our local tracking
                 if arg.id in self.local_vars:
                     arg_type = self.local_vars[arg.id]
+            elif isinstance(arg, ast.Attribute):
+                # It's a struct field access, e.g., p.x
+                var_name = getattr(arg.value, 'id', None)
+                if var_name in self.local_vars:
+                    struct_type_name = self.local_vars[var_name]
+                    struct_symbol = self.symbol_table.lookup(struct_type_name)
+                    if struct_symbol and struct_symbol.type == 'struct':
+                        field_name = arg.attr
+                        if field_name in struct_symbol.fields:
+                            arg_type = struct_symbol.fields[field_name]
             elif isinstance(arg, ast.Constant):
                 # It's a literal constant
                 if isinstance(arg.value, str):
@@ -254,7 +286,11 @@ class CCodeGenerator(ast.NodeVisitor):
             base_type = type_str[4:-1]
             return self._c_type_from_pyrinas_type(base_type) + '*'
         else:
-            return {'int': 'int', 'float': 'float', 'bool': 'int'}.get(type_str, type_str)
+            c_type = {'int': 'int', 'float': 'float', 'bool': 'int'}.get(type_str)
+            if c_type:
+                return c_type
+            # Assume it's a struct type if not a primitive
+            return f'struct {type_str}'
 
     def _get_preceding_label(self, loop_node):
         # This is a bit of a hack. We need to find the label
@@ -268,4 +304,4 @@ class CCodeGenerator(ast.NodeVisitor):
 
     def generate(self, tree):
         self.visit(tree)
-        return '#include "pyrinas.h"\n\n' + '\n'.join(self.function_definitions) + '\n\n' + '\n'.join(self.main_code)
+        return '#include "pyrinas.h"\n\n' + '\n'.join(self.struct_definitions) + '\n\n' + '\n'.join(self.function_definitions) + '\n\n' + '\n'.join(self.main_code)

@@ -1,0 +1,42 @@
+# String Utilities Module
+# Provides common string operations
+
+# Import C string functions
+@c_include("string.h")
+@c_function
+def strlen(s: str) -> int:
+    pass
+
+@c_function
+def strcmp(s1: str, s2: str) -> int:
+    pass
+
+def string_length(s: str) -> int:
+    """Get the length of a string"""
+    return strlen(s)
+
+def strings_equal(s1: str, s2: str) -> bool:
+    """Check if two strings are equal"""
+    return strcmp(s1, s2) == 0
+
+def string_compare(s1: str, s2: str) -> int:
+    """Compare two strings lexicographically"""
+    return strcmp(s1, s2)
+
+def is_empty(s: str) -> bool:
+    """Check if a string is empty"""
+    return strlen(s) == 0
+
+def count_words(text: str) -> int:
+    """Count words in a string (simplified - counts spaces + 1)"""
+    if is_empty(text):
+        return 0
+    
+    # Simplified word count: assume words are separated by single spaces
+    # In a real implementation, this would be more sophisticated
+    length: int = strlen(text)
+    word_count: int = 1  # At least one word if not empty
+    
+    # This is a simplified implementation
+    # In practice, you'd iterate through the string
+    return word_count

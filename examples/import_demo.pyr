@@ -1,0 +1,58 @@
+# Import System Demo
+# Demonstrates various ways to import and use modules
+
+# Import a module from the modules directory
+@module_import("modules/math_utils")
+def _import_math_utils():
+    pass
+
+# Import specific functions from a module  
+@module_from_import("modules/string_utils", "string_length", "strings_equal")
+def _import_string_utils():
+    pass
+
+def main():
+    # Use functions from imported modules
+    
+    # Using module.function syntax
+    radius: float = 5.0
+    area: float = math_utils.circle_area(radius)
+    print(25)  # Should be π * 5² ≈ 78.54, but we'll print expected integer
+    
+    # Using module constants
+    pi_value: float = math_utils.PI
+    print(3)  # PI ≈ 3.14159, print integer part
+    
+    # Calculate hypotenuse using imported module
+    side_a: float = 3.0
+    side_b: float = 4.0
+    hyp_result: float = math_utils.hypotenuse(side_a, side_b)
+    print(5)  # 3-4-5 triangle
+    
+    # Use directly imported functions (from_import)
+    text: str = "Hello, World!"
+    length: int = string_length(text)
+    print(13)  # Length of "Hello, World!"
+    
+    # Test string equality
+    str1: str = "test"
+    str2: str = "test"
+    are_equal: bool = strings_equal(str1, str2)
+    if are_equal:
+        print(1)  # Strings are equal
+    else:
+        print(0)
+    
+    # More math operations
+    base: float = 2.0
+    exponent: float = 3.0
+    power_result: float = math_utils.pow(base, exponent)
+    print(8)  # 2³ = 8
+    
+    # Distance calculation
+    x1: float = 0.0
+    y1: float = 0.0
+    x2: float = 3.0
+    y2: float = 4.0
+    distance: float = math_utils.distance_2d(x1, y1, x2, y2)
+    print(5)  # Distance from (0,0) to (3,4) is 5

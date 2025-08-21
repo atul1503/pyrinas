@@ -41,6 +41,10 @@ class CCodeGenerator(ast.NodeVisitor):
             # Skip generating definition for external C functions
             return
         
+        # Skip import helper functions
+        if node.name.startswith('_import_'):
+            return
+        
         if node.name == 'main':
             self.current_code_list = self.main_code
             self.main_code.append('int main() {')
@@ -298,16 +302,26 @@ class CCodeGenerator(ast.NodeVisitor):
         self.current_code_list.append(f'{self._indent()}{target} = {value};')
 
     def visit_Attribute(self, node):
-        # Check if this is enum member access (EnumName.MEMBER)
+        # Check if this is module access (module.constant or module.function)
         if isinstance(node.value, ast.Name):
-            enum_name = node.value.id
+            name = node.value.id
+            
+            # Check if this is a module access
+            if self.semantic_analyzer:
+                symbol = self.symbol_table.lookup(name)
+                if symbol and symbol.type == 'module':
+                    # This is module access - return the member name directly
+                    # The semantic analyzer has already validated this exists
+                    return node.attr
+            
+            # Check if this is enum member access (EnumName.MEMBER)
             # Check if this is an enum type (we can't easily access semantic info here,
             # so we'll use a naming convention - this is a simplification)
             # For now, we'll assume if it's a simple Name.attr pattern, it might be an enum
             # The semantic analyzer has already validated this is correct
-            if enum_name[0].isupper():  # Enum names start with uppercase by convention
+            if name[0].isupper():  # Enum names start with uppercase by convention
                 member_name = node.attr
-                return f'{enum_name}_{member_name}'
+                return f'{name}_{member_name}'
         
         var = self.visit(node.value)
         attr = node.attr
@@ -578,7 +592,7 @@ class CCodeGenerator(ast.NodeVisitor):
             raise NotImplementedError(f"Unsupported function call type: {type(node.func).__name__}")
 
     def _visit_method_call(self, node):
-        """Generate C code for method calls (obj.method())"""
+        """Generate C code for method calls (obj.method()) and module function calls (module.function())"""
         obj_node = node.func.value
         method_name = node.func.attr
         
@@ -588,10 +602,19 @@ class CCodeGenerator(ast.NodeVisitor):
         # Get arguments
         args = [self.visit(arg) for arg in node.args]
         
-        # For now, generate direct method calls using struct_method naming convention
-        # In the future, this could use vtables for interface dispatch
+        # Check if this is a module function call
         if isinstance(obj_node, ast.Name):
             obj_name = obj_node.id
+            
+            # Check if this is a module reference
+            if self.semantic_analyzer:
+                symbol = self.symbol_table.lookup(obj_name)
+                if symbol and symbol.type == 'module':
+                    # This is a module function call - call the function directly
+                    args_str = ', '.join(args)
+                    return f'{method_name}({args_str})'
+            
+            # Check if this is a regular object
             if obj_name in self.local_vars:
                 obj_type = self.local_vars[obj_name]
                 # Generate method call like: Rectangle_draw(&rect, args...)
@@ -679,6 +702,31 @@ class CCodeGenerator(ast.NodeVisitor):
             for header in sorted(self.semantic_analyzer.c_includes):
                 c_code.append(f'#include <{header}>')
         
+        # Add imported module code
+        if self.semantic_analyzer and hasattr(self.semantic_analyzer, 'imported_modules'):
+            all_c_includes = set()
+            for import_path, module_analyzer in self.semantic_analyzer.imported_modules.items():
+                # Generate code for the imported module
+                module_generator = CCodeGenerator(module_analyzer.symbol_table, module_analyzer)
+                module_code = module_generator.generate_module_code(module_analyzer)
+                
+                # Collect C includes from the module
+                if hasattr(module_analyzer, 'c_includes'):
+                    all_c_includes.update(module_analyzer.c_includes)
+                
+                # Add the module's C code (functions and constants)
+                if module_code:
+                    c_code.extend(module_code)
+                    
+            # Add any additional C headers from imported modules
+            # Insert them after the pyrinas.h include but before any other code
+            insert_position = 1  # After #include "pyrinas.h"
+            for header in sorted(all_c_includes):
+                header_line = f'#include <{header}>'
+                if header_line not in c_code:
+                    c_code.insert(insert_position, header_line)
+                    insert_position += 1
+        
         c_code.append('')  # Empty line
         
         # Add struct definitions
@@ -695,3 +743,65 @@ class CCodeGenerator(ast.NodeVisitor):
         c_code.extend(self.main_code)
         
         return '\n'.join(c_code)
+
+    def generate_module_code(self, module_analyzer):
+        """Generate C code for an imported module (functions and constants only)."""
+        module_code = []
+        constants = []
+        functions = []
+        
+        # Get the module's AST to generate code from
+        if hasattr(module_analyzer, 'current_file'):
+            try:
+                with open(module_analyzer.current_file, 'r') as f:
+                    code = f.read()
+                from pyrinas.parser import get_ast
+                tree = get_ast(code)
+                
+                # First, generate constant definitions
+                for item in tree.body:
+                    if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
+                        # This is a global constant
+                        const_name = item.target.id
+                        const_symbol = module_analyzer.symbol_table.lookup(const_name)
+                        if const_symbol:
+                            c_type = self._c_type_from_pyrinas_type(const_symbol.type)
+                            if isinstance(item.value, ast.Constant):
+                                const_value = item.value.value
+                                if isinstance(const_value, str):
+                                    constants.append(f'const {c_type} {const_name} = "{const_value}";')
+                                else:
+                                    constants.append(f'const {c_type} {const_name} = {const_value};')
+                
+                # Then, generate function definitions from the module
+                for item in tree.body:
+                    if isinstance(item, ast.FunctionDef):
+                        # Skip import helper functions
+                        if item.name.startswith('_import_'):
+                            continue
+                        
+                        # Skip main function in modules
+                        if item.name == 'main':
+                            continue
+                            
+                        # Generate function code
+                        func_symbol = module_analyzer.symbol_table.lookup(item.name)
+                        if func_symbol and hasattr(func_symbol, 'is_c_function') and func_symbol.is_c_function:
+                            continue  # Skip external C functions
+                        
+                        old_function_definitions = self.function_definitions
+                        self.function_definitions = []
+                        self.visit(item)
+                        functions.extend(self.function_definitions)
+                        self.function_definitions = old_function_definitions
+                
+                # Combine constants first, then functions
+                module_code.extend(constants)
+                module_code.extend(functions)
+                
+            except Exception as e:
+                # If we can't generate module code, just return empty
+                print(f"Warning: Could not generate code for module {module_analyzer.current_file}: {e}")
+                return []
+        
+        return module_code

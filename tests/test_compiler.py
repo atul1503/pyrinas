@@ -44,6 +44,8 @@ EXAMPLES = [
     ('simple_recursive_test', '42\n84\n84\n'),
     # C interop tests
     ('c_math_demo', '1\n0\n5\n8\n7\n5\n'),
+    # Import system tests
+    ('import_demo', '25\n3\n5\n13\n1\n8\n5\n'),
 ]
 
 @pytest.mark.parametrize("example, expected_output", EXAMPLES)

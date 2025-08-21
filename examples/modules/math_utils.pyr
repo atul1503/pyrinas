@@ -1,0 +1,53 @@
+# Math Utilities Module
+# Provides common mathematical operations and constants
+
+# Import C math functions
+@c_include("math.h")
+@c_function
+def sqrt(x: float) -> float:
+    pass
+
+@c_function
+def pow(base: float, exponent: float) -> float:
+    pass
+
+@c_function
+def sin(x: float) -> float:
+    pass
+
+@c_function
+def cos(x: float) -> float:
+    pass
+
+# Mathematical constants
+PI: float = 3.14159265359
+
+def square(x: float) -> float:
+    """Calculate the square of a number"""
+    return x * x
+
+def cube(x: float) -> float:
+    """Calculate the cube of a number"""
+    return x * x * x
+
+def hypotenuse(a: float, b: float) -> float:
+    """Calculate hypotenuse using Pythagorean theorem"""
+    return sqrt(square(a) + square(b))
+
+def circle_area(radius: float) -> float:
+    """Calculate the area of a circle"""
+    return PI * square(radius)
+
+def degrees_to_radians(degrees: float) -> float:
+    """Convert degrees to radians"""
+    return degrees * PI / 180.0
+
+def radians_to_degrees(radians: float) -> float:
+    """Convert radians to degrees"""
+    return radians * 180.0 / PI
+
+def distance_2d(x1: float, y1: float, x2: float, y2: float) -> float:
+    """Calculate 2D distance between two points"""
+    dx: float = x2 - x1
+    dy: float = y2 - y1
+    return sqrt(square(dx) + square(dy))

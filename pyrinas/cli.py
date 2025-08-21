@@ -4,6 +4,7 @@ import subprocess
 from pyrinas.parser import get_ast
 from pyrinas.semantic import SemanticAnalyzer, ParentageVisitor
 from pyrinas.codegen import CCodeGenerator
+from pyrinas.module_resolver import ModuleResolver
 
 def compile_file(input_file, output_file_c, output_executable):
     """
@@ -18,7 +19,11 @@ def compile_file(input_file, output_file_c, output_executable):
     print(ast.dump(tree, indent=4))
     
     ParentageVisitor().visit(tree)
-    analyzer = SemanticAnalyzer()
+    
+    # Create module resolver and semantic analyzer
+    base_path = os.path.dirname(os.path.abspath(input_file))
+    module_resolver = ModuleResolver(base_path)
+    analyzer = SemanticAnalyzer(current_file=input_file, module_resolver=module_resolver)
     analyzer.visit(tree)
     
     generator = CCodeGenerator(analyzer.symbol_table, analyzer)

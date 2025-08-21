@@ -81,6 +81,14 @@ python3 -m pyrinas.cli hello.pyr -o hello
 # Output: Hello, Pyrinas!
 ```
 
+### Documentation
+
+See the `docs/` directory for comprehensive guides:
+
+- **[C Interop Guide](docs/c-interop-guide.md)** - Complete C library integration guide
+- **[C Interop Tutorial](docs/c-interop-tutorial.md)** - Step-by-step hands-on tutorial
+- **[C Interop API Reference](docs/c-interop-api.md)** - Ready-to-use C function declarations
+
 ### More Examples
 
 See the `examples/` directory for comprehensive examples:
@@ -91,6 +99,7 @@ See the `examples/` directory for comprehensive examples:
 - **`arrays.pyr`** - Array declarations and manipulation
 - **`errors.pyr`** - Result type error handling
 - **`memory.pyr`** - Manual memory management
+- **`c_math_demo.pyr`** - C library integration demo
 
 ## Testing
 

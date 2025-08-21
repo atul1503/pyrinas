@@ -1,5 +1,6 @@
 import ast
 import re
+from typing import Optional
 
 class Symbol:
     def __init__(self, name, type, param_types=None, return_type=None, fields=None, immutable=False, methods=None, implements=None, enum_members=None, is_c_function=False, c_library=None):
@@ -42,7 +43,7 @@ class SymbolTable:
         return self._scopes[-1].get(name)
 
 class SemanticAnalyzer(ast.NodeVisitor):
-    def __init__(self):
+    def __init__(self, current_file: Optional[str] = None, module_resolver=None):
         self.symbol_table = SymbolTable()
         self.current_function_return_type = None
         self.loop_depth = 0
@@ -51,6 +52,10 @@ class SemanticAnalyzer(ast.NodeVisitor):
         self.c_includes = set()  # Set of C headers to include
         self.c_functions = {}    # Function name -> C library info
         self.c_libraries = set() # Set of C libraries to link
+        # Import system
+        self.current_file = current_file
+        self.module_resolver = module_resolver
+        self.imported_modules = {}  # import_path -> analyzer
     
     def _get_type_name(self, annotation):
         """Extract type name from annotation node (handles both ast.Name and ast.Constant)"""
@@ -108,15 +113,85 @@ class SemanticAnalyzer(ast.NodeVisitor):
             return True
         return False
 
+    def _process_import(self, import_path: str, alias: Optional[str] = None, from_import: bool = False, import_names: Optional[list] = None):
+        """Process an import statement."""
+        if not self.module_resolver:
+            raise ImportError("Module resolver not available for imports")
+        
+        try:
+            # Load the module
+            module_analyzer = self.module_resolver.load_module(import_path, self.current_file)
+            self.imported_modules[import_path] = module_analyzer
+            
+            # Get exportable symbols from the module
+            exports = self.module_resolver.get_module_exports(module_analyzer)
+            
+            if from_import and import_names:
+                # from "module" import func1, func2
+                for name in import_names:
+                    if name in exports:
+                        symbol = exports[name]
+                        # Import the symbol directly into current scope
+                        self.symbol_table.insert(symbol)
+                    else:
+                        raise ImportError(f"'{name}' not found in module '{import_path}'")
+            else:
+                # import "module" [as alias]
+                module_name = alias if alias else import_path.split('/')[-1].replace('.pyr', '')
+                
+                # Create a module symbol containing all exports
+                module_symbol = Symbol(module_name, 'module')
+                module_symbol.exports = exports
+                self.symbol_table.insert(module_symbol)
+                
+        except Exception as e:
+            raise ImportError(f"Failed to import '{import_path}': {e}")
+
+    def _handle_import_statement(self, node):
+        """Handle import statements in the AST (using decorators)."""
+        if isinstance(node, ast.FunctionDef):
+            # Check for import decorators
+            for decorator in node.decorator_list:
+                if isinstance(decorator, ast.Call) and isinstance(decorator.func, ast.Name):
+                    if decorator.func.id == 'module_import' and len(decorator.args) >= 1:
+                        # @module_import("module_path")
+                        if isinstance(decorator.args[0], ast.Constant):
+                            import_path = decorator.args[0].value
+                            alias = decorator.args[1].value if len(decorator.args) > 1 and isinstance(decorator.args[1], ast.Constant) else None
+                            self._process_import(import_path, alias)
+                            return True
+                    elif decorator.func.id == 'module_from_import' and len(decorator.args) >= 2:
+                        # @from_import("module_path", "func1", "func2", ...)
+                        if isinstance(decorator.args[0], ast.Constant):
+                            import_path = decorator.args[0].value
+                            import_names = []
+                            for i in range(1, len(decorator.args)):
+                                if isinstance(decorator.args[i], ast.Constant):
+                                    import_names.append(decorator.args[i].value)
+                            self._process_import(import_path, from_import=True, import_names=import_names)
+                            return True
+        return False
+
     def visit_Module(self, node):
-        # Ensure 'main' function is defined
+        # Phase 0: Process imports first
+        for item in node.body:
+            if self._handle_import_statement(item):
+                continue  # Skip further processing for import statements
+        
+        # Ensure 'main' function is defined (unless this is a library module)
         main_found = False
         for item in node.body:
             if isinstance(item, ast.FunctionDef) and item.name == 'main':
                 main_found = True
                 break
+        
+        # Only require main function for executable modules (not library modules)
         if not main_found:
-            raise NameError("main function not found.")
+            if self.current_file and ('/modules/' in self.current_file or self.current_file.endswith('_utils.pyr')):
+                # Allow library modules to not have main
+                pass
+            else:
+                raise NameError("main function not found.")
         
         # First pass: register all function signatures and struct definitions (without processing bodies)
         for item in node.body:
@@ -541,6 +616,20 @@ class SemanticAnalyzer(ast.NodeVisitor):
             if not symbol:
                 raise NameError(f"Name '{name}' not declared.")
             
+            # Check if this is module access (module.function or module.constant)
+            if symbol.type == 'module':
+                member_name = node.attr
+                if hasattr(symbol, 'exports') and member_name in symbol.exports:
+                    exported_symbol = symbol.exports[member_name]
+                    if exported_symbol.type == 'function':
+                        # For function references, return the function type
+                        return f'function:{exported_symbol.return_type}'
+                    else:
+                        # For constants/variables, return their type
+                        return exported_symbol.type
+                else:
+                    raise AttributeError(f"Module '{name}' has no member '{member_name}'.")
+            
             # Check if this is enum member access (EnumName.MEMBER)
             if symbol.type == 'enum':
                 member_name = node.attr
@@ -904,7 +993,7 @@ class SemanticAnalyzer(ast.NodeVisitor):
             raise NotImplementedError("Only direct function calls and method calls are supported.")
 
     def _visit_method_call(self, node):
-        """Handle method calls like obj.method()"""
+        """Handle method calls like obj.method() and module function calls like module.function()"""
         # Get the object being called
         obj_node = node.func.value
         method_name = node.func.attr
@@ -915,6 +1004,31 @@ class SemanticAnalyzer(ast.NodeVisitor):
             obj_symbol = self.symbol_table.lookup(obj_name)
             if not obj_symbol:
                 raise NameError(f"Variable '{obj_name}' not defined.")
+            
+            # Check if this is a module access (module.function)
+            if obj_symbol.type == 'module':
+                # This is a module function call
+                if hasattr(obj_symbol, 'exports') and method_name in obj_symbol.exports:
+                    func_symbol = obj_symbol.exports[method_name]
+                    
+                    # Validate function call
+                    if func_symbol.type != 'function':
+                        raise TypeError(f"'{method_name}' in module '{obj_name}' is not a function.")
+                    
+                    # Validate argument count and types
+                    if len(node.args) != len(func_symbol.param_types):
+                        raise TypeError(f"Function '{obj_name}.{method_name}' expects {len(func_symbol.param_types)} arguments, but got {len(node.args)}.")
+                    
+                    for i, arg_node in enumerate(node.args):
+                        arg_type = self.visit(arg_node)
+                        expected_type = func_symbol.param_types[i]
+                        if arg_type != expected_type:
+                            raise TypeError(f"Argument {i+1} of function '{obj_name}.{method_name}' has type {arg_type}, but expected {expected_type}.")
+                    
+                    return func_symbol.return_type
+                else:
+                    raise AttributeError(f"Module '{obj_name}' has no function '{method_name}'.")
+            
             obj_type = obj_symbol.type
         else:
             # For more complex expressions, get the type recursively

@@ -1,0 +1,44 @@
+# Geometry Module
+# Provides geometric shapes and calculations
+# This module will import math_utils to demonstrate module dependencies
+
+class Point:
+    x: float
+    y: float
+
+class Rectangle:
+    width: float
+    height: float
+
+class Circle:
+    radius: float
+
+def create_point(x: float, y: float) -> Point:
+    """Create a new point"""
+    p: Point = Point()
+    p.x = x
+    p.y = y
+    return p
+
+def create_rectangle(width: float, height: float) -> Rectangle:
+    """Create a new rectangle"""
+    r: Rectangle = Rectangle()
+    r.width = width
+    r.height = height
+    return r
+
+def create_circle(radius: float) -> Circle:
+    """Create a new circle"""
+    c: Circle = Circle()
+    c.radius = radius
+    return c
+
+def rectangle_area(rect: Rectangle) -> float:
+    """Calculate the area of a rectangle"""
+    return rect.width * rect.height
+
+def rectangle_perimeter(rect: Rectangle) -> float:
+    """Calculate the perimeter of a rectangle"""
+    return 2.0 * (rect.width + rect.height)
+
+# Note: circle_area and point_distance would use math_utils when imports are implemented

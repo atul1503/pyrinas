@@ -821,7 +821,7 @@ class ParentageVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 if __name__ == '__main__':
-    with open('examples/hello.py', 'r') as f:
+    with open('examples/hello.pyr', 'r') as f:
         code = f.read()
     
     tree = ast.parse(code)

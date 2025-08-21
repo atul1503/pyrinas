@@ -42,13 +42,13 @@ This compiles the Pyrinas runtime (`runtime/pyrinas.c`) into an object file that
 To compile a Pyrinas program to an executable:
 
 ```bash
-python3 -m pyrinas.cli input.py -o output_executable
+python3 -m pyrinas.cli input.pyr -o output_executable
 ```
 
 **Example:**
 ```bash
-# Compile hello.py to an executable named 'hello'
-python3 -m pyrinas.cli examples/hello.py -o hello
+# Compile hello.pyr to an executable named 'hello'
+python3 -m pyrinas.cli examples/hello.pyr -o hello
 
 # Run the compiled program
 ./hello
@@ -56,18 +56,18 @@ python3 -m pyrinas.cli examples/hello.py -o hello
 
 ### Complete Workflow
 
-1. **Write Pyrinas Code** (`.py` files with type annotations)
+1. **Write Pyrinas Code** (`.pyr` files with type annotations)
 2. **Compile to C** → Pyrinas compiler generates C code
 3. **Compile C to Executable** → GCC compiles C code + runtime
 4. **Run Executable** → Native binary execution
 
 ```
-hello.py → [Pyrinas Compiler] → hello.c → [GCC + Runtime] → hello (executable) → ./hello
+hello.pyr → [Pyrinas Compiler] → hello.c → [GCC + Runtime] → hello (executable) → ./hello
 ```
 
 ### Example Program
 
-**hello.py:**
+**hello.pyr:**
 ```python
 def main() -> int:
     print("Hello, Pyrinas!")
@@ -76,7 +76,7 @@ def main() -> int:
 
 **Compilation:**
 ```bash
-python3 -m pyrinas.cli hello.py -o hello
+python3 -m pyrinas.cli hello.pyr -o hello
 ./hello
 # Output: Hello, Pyrinas!
 ```
@@ -85,12 +85,12 @@ python3 -m pyrinas.cli hello.py -o hello
 
 See the `examples/` directory for comprehensive examples:
 
-- **`functions.py`** - Function definitions and calls
-- **`pointers.py`** - Pointer operations and memory access
-- **`structs.py`** - User-defined data structures
-- **`arrays.py`** - Array declarations and manipulation
-- **`errors.py`** - Result type error handling
-- **`memory.py`** - Manual memory management
+- **`functions.pyr`** - Function definitions and calls
+- **`pointers.pyr`** - Pointer operations and memory access
+- **`structs.pyr`** - User-defined data structures
+- **`arrays.pyr`** - Array declarations and manipulation
+- **`errors.pyr`** - Result type error handling
+- **`memory.pyr`** - Manual memory management
 
 ## Testing
 

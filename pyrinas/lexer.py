@@ -9,7 +9,7 @@ def get_tokens(code: str):
     return list(tokenize.generate_tokens(BytesIO(code_bytes).readline))
 
 if __name__ == '__main__':
-    with open('examples/hello.py', 'r') as f:
+    with open('examples/hello.pyr', 'r') as f:
         code = f.read()
     
     for token in get_tokens(code):

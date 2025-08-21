@@ -8,7 +8,7 @@ This document describes the comprehensive integration tests created to verify th
 
 ### 1. Basic Integration Tests (Added to Test Suite)
 
-#### `integration_simple.py` - Functions + Structs
+#### `integration_simple.pyr` - Functions + Structs
 **Features tested:** Function definitions, struct definitions, struct field access, function parameters and returns
 **Expected output:** `3\n4\n25\n`
 **Tests:**
@@ -17,7 +17,7 @@ This document describes the comprehensive integration tests created to verify th
 - Accessing struct fields
 - Mathematical operations with struct data
 
-#### `integration_functions_arrays.py` - Functions + Arrays  
+#### `integration_functions_arrays.pyr` - Functions + Arrays  
 **Features tested:** Function definitions, array declarations, array indexing, while loops
 **Expected output:** `10\n14\n60\n14\n`
 **Tests:**
@@ -26,7 +26,7 @@ This document describes the comprehensive integration tests created to verify th
 - Functions that read from arrays
 - Array iteration in functions
 
-#### `integration_functions_pointers.py` - Functions + Pointers
+#### `integration_functions_pointers.pyr` - Functions + Pointers
 **Features tested:** Function definitions, pointer operations, addr(), deref(), assign()
 **Expected output:** `50\n100\n100\n50\n`  
 **Tests:**
@@ -35,7 +35,7 @@ This document describes the comprehensive integration tests created to verify th
 - Functions that read values through pointers
 - Multiple pointer operations in sequence
 
-#### `integration_control_flow.py` - Control Flow + Arrays + Functions
+#### `integration_control_flow.pyr` - Control Flow + Arrays + Functions
 **Features tested:** While loops, break, continue, labeled break, arrays, functions
 **Expected output:** `3\n6\n20\n`
 **Tests:**
@@ -46,7 +46,7 @@ This document describes the comprehensive integration tests created to verify th
 
 ### 2. Advanced Integration Tests (Created, Not Yet Added to Suite)
 
-#### `integration_functions_structs_pointers.py` - Functions + Structs + Pointers
+#### `integration_functions_structs_pointers.pyr` - Functions + Structs + Pointers
 **Features tested:** Complex pointer operations with structs, struct field access through pointers
 **Tests:**
 - Functions that take struct pointers
@@ -54,7 +54,7 @@ This document describes the comprehensive integration tests created to verify th
 - Dereferencing pointers to access struct fields
 - Complex struct operations
 
-#### `integration_arrays_structs_functions.py` - Arrays + Structs + Functions
+#### `integration_arrays_structs_functions.pyr` - Arrays + Structs + Functions
 **Features tested:** Arrays of structs, functions with complex data structures
 **Tests:**
 - Arrays containing struct elements
@@ -62,7 +62,7 @@ This document describes the comprehensive integration tests created to verify th
 - Struct field access within array elements
 - Complex data structure manipulation
 
-#### `integration_memory_pointers_functions.py` - Memory + Pointers + Functions
+#### `integration_memory_pointers_functions.pyr` - Memory + Pointers + Functions
 **Features tested:** Dynamic memory allocation, malloc/free, sizeof, pointers
 **Tests:**
 - Dynamic memory allocation in functions
@@ -70,7 +70,7 @@ This document describes the comprehensive integration tests created to verify th
 - Pointer operations with allocated memory
 - Memory cleanup procedures
 
-#### `integration_complex_control_flow.py` - Complex Control Flow
+#### `integration_complex_control_flow.pyr` - Complex Control Flow
 **Features tested:** Nested loops, labeled breaks/continues, arrays, complex conditions
 **Tests:**
 - Multi-level nested loops
@@ -78,7 +78,7 @@ This document describes the comprehensive integration tests created to verify th
 - Array processing with complex control flow
 - Advanced loop patterns
 
-#### `integration_kitchen_sink.py` - All Features Combined
+#### `integration_kitchen_sink.pyr` - All Features Combined
 **Features tested:** Everything together - the ultimate integration test
 **Tests:**
 - Structs containing structs
@@ -87,7 +87,7 @@ This document describes the comprehensive integration tests created to verify th
 - Complex control flow with all data types
 - Real-world-like program structure
 
-#### `integration_results_functions_structs.py` - Result Types + Functions + Structs  
+#### `integration_results_functions_structs.pyr` - Result Types + Functions + Structs  
 **Features tested:** Result types, error handling, functions, structs
 **Tests:**
 - Functions returning Result types containing structs

@@ -49,7 +49,7 @@ def test_example(example, expected_output):
     """
     Tests a single example from the examples folder.
     """
-    input_file = os.path.join(EXAMPLES_DIR, f'{example}.py')
+    input_file = os.path.join(EXAMPLES_DIR, f'{example}.pyr')
     output_executable = os.path.join(EXAMPLES_DIR, f'{example}')
     
     # Compile the example

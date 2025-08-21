@@ -2,13 +2,16 @@ import ast
 import re
 
 class Symbol:
-    def __init__(self, name, type, param_types=None, return_type=None, fields=None, immutable=False):
+    def __init__(self, name, type, param_types=None, return_type=None, fields=None, immutable=False, methods=None, implements=None, enum_members=None):
         self.name = name
         self.type = type
         self.param_types = param_types
         self.return_type = return_type
         self.fields = fields # For structs
         self.immutable = immutable # Whether this variable is immutable
+        self.methods = methods or {} # For interfaces: method_name -> (param_types, return_type)
+        self.implements = implements or [] # For structs: list of interface names they implement
+        self.enum_members = enum_members or {} # For enums: member_name -> value
 
 class SymbolTable:
     def __init__(self):
@@ -103,25 +106,129 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 self.visit(item)
 
     def visit_ClassDef(self, node):
-        struct_name = node.name
-        if self.symbol_table.lookup_current_scope(struct_name):
-            raise NameError(f"Type '{struct_name}' already defined.")
+        class_name = node.name
+        if self.symbol_table.lookup_current_scope(class_name):
+            raise NameError(f"Type '{class_name}' already defined.")
         
-        fields = {}
-        for stmt in node.body:
-            if isinstance(stmt, ast.AnnAssign):
-                field_name = stmt.target.id
-                # This part is simplified; it needs to handle various annotation types
-                if isinstance(stmt.annotation, ast.Name):
-                    field_type = stmt.annotation.id
-                else: # Add more complex type parsing here if needed
-                    field_type = "unknown" 
-                fields[field_name] = field_type
-            # Pass allows empty structs
-            elif not isinstance(stmt, ast.Pass):
-                 raise TypeError("Struct body can only contain annotated assignments or pass.")
+        # Check if this class inherits from Enum
+        is_enum = False
+        implements = []
+        for base in node.bases:
+            if isinstance(base, ast.Name):
+                base_name = base.id
+                if base_name == 'Enum':
+                    is_enum = True
+                else:
+                    base_symbol = self.symbol_table.lookup(base_name)
+                    if base_symbol and base_symbol.type == 'interface':
+                        implements.append(base_name)
+                    else:
+                        raise TypeError(f"Class '{class_name}' can only inherit from interfaces or Enum, not '{base_name}'.")
         
-        self.symbol_table.insert(Symbol(struct_name, 'struct', fields=fields))
+        if is_enum:
+            # This is an enum - parse enum members
+            enum_members = {}
+            for stmt in node.body:
+                if isinstance(stmt, ast.Assign):
+                    # Enum member assignment (e.g., RED = 0)
+                    if len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name):
+                        member_name = stmt.targets[0].id
+                        if isinstance(stmt.value, ast.Constant):
+                            enum_members[member_name] = stmt.value.value
+                        else:
+                            raise TypeError(f"Enum member '{member_name}' must have a constant value.")
+                    else:
+                        raise TypeError("Enum member assignments must be simple assignments.")
+                elif not isinstance(stmt, ast.Pass):
+                    raise TypeError("Enum body can only contain member assignments or pass.")
+            
+            symbol = Symbol(class_name, 'enum', enum_members=enum_members)
+        else:
+            # Analyze class body to determine if it's an interface or struct
+            fields = {}
+            methods = {}
+            has_fields = False
+            has_method_implementations = False
+            
+            for stmt in node.body:
+                if isinstance(stmt, ast.AnnAssign):
+                    # Field declaration
+                    field_name = stmt.target.id
+                    if isinstance(stmt.annotation, ast.Name):
+                        field_type = stmt.annotation.id
+                    else:
+                        field_type = "unknown" 
+                    fields[field_name] = field_type
+                    has_fields = True
+                    
+                elif isinstance(stmt, ast.FunctionDef):
+                    # Method declaration
+                    method_name = stmt.name
+                    
+                    # Extract parameter types (skip 'self' parameter)
+                    param_types = []
+                    for arg in stmt.args.args[1:]:  # Skip self
+                        type_name = self._get_type_name(arg.annotation)
+                        if type_name is None:
+                            raise TypeError(f"Method parameter '{arg.arg}' must have a type annotation.")
+                        param_types.append(type_name)
+                    
+                    # Extract return type
+                    return_type = None
+                    if stmt.returns:
+                        if isinstance(stmt.returns, ast.Name):
+                            return_type = stmt.returns.id
+                        elif isinstance(stmt.returns, ast.Constant) and isinstance(stmt.returns.value, str):
+                            return_type = stmt.returns.value
+                    
+                    methods[method_name] = (param_types, return_type)
+                    
+                    # Check if method has implementation or just pass
+                    if len(stmt.body) == 1 and isinstance(stmt.body[0], ast.Pass):
+                        # Just a pass statement - interface method
+                        pass
+                    else:
+                        # Has implementation - struct method
+                        has_method_implementations = True
+                        
+                elif not isinstance(stmt, ast.Pass):
+                    raise TypeError("Class body can only contain field declarations, method signatures, or pass.")
+            
+            # Determine if this is an interface or struct
+            if has_fields or has_method_implementations or implements:
+                # This is a struct
+                if implements:
+                    # Validate that struct implements all interface methods
+                    self._validate_interface_implementation(class_name, implements, methods)
+                
+                symbol = Symbol(class_name, 'struct', fields=fields, methods=methods, implements=implements)
+            else:
+                # This is an interface (only method signatures with pass)
+                symbol = Symbol(class_name, 'interface', methods=methods)
+        
+        self.symbol_table.insert(symbol)
+
+    def _validate_interface_implementation(self, struct_name, implements, struct_methods):
+        """Validate that a struct implements all required interface methods"""
+        for interface_name in implements:
+            interface_symbol = self.symbol_table.lookup(interface_name)
+            if not interface_symbol:
+                raise NameError(f"Interface '{interface_name}' not found.")
+            
+            # Check each method in the interface
+            for method_name, (interface_param_types, interface_return_type) in interface_symbol.methods.items():
+                if method_name not in struct_methods:
+                    raise TypeError(f"Struct '{struct_name}' must implement method '{method_name}' from interface '{interface_name}'.")
+                
+                struct_param_types, struct_return_type = struct_methods[method_name]
+                
+                # Check parameter types match
+                if struct_param_types != interface_param_types:
+                    raise TypeError(f"Method '{method_name}' in struct '{struct_name}' has parameter types {struct_param_types}, but interface '{interface_name}' requires {interface_param_types}.")
+                
+                # Check return types match
+                if struct_return_type != interface_return_type:
+                    raise TypeError(f"Method '{method_name}' in struct '{struct_name}' has return type '{struct_return_type}', but interface '{interface_name}' requires '{interface_return_type}'.")
 
     def visit_FunctionDef(self, node):
         # Set current function return type for return statement validation
@@ -212,7 +319,7 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 raise TypeError(f"Unsupported subscript type annotation: {annotation_name}")
         else:
             raise TypeError("Type annotation must be a name, a pointer string, an array annotation, or Final[type].")
-
+        
         if self.symbol_table.lookup_current_scope(var_name):
             raise NameError(f"Variable '{var_name}' already declared in this scope.")
         
@@ -274,7 +381,7 @@ class SemanticAnalyzer(ast.NodeVisitor):
             else:
                 # For other assignment types, just visit normally
                 self.visit(target)
-                self.visit(node.value)
+            self.visit(node.value)
 
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load):
@@ -301,30 +408,49 @@ class SemanticAnalyzer(ast.NodeVisitor):
         # Assuming only one comparator for now
         right_type = self.visit(node.comparators[0])
 
+        # Check enum type compatibility for comparisons
+        left_symbol = self.symbol_table.lookup(left_type)
+        right_symbol = self.symbol_table.lookup(right_type)
+        
+        # If both sides are enum types, they must be the same enum type
+        if (left_symbol and left_symbol.type == 'enum' and 
+            right_symbol and right_symbol.type == 'enum'):
+            if left_type != right_type:
+                raise TypeError(f"Cannot compare different enum types: '{left_type}' and '{right_type}'.")
+
         # Comparison operations always result in a boolean
         return 'bool'
 
     def visit_Attribute(self, node):
-        # This handles expressions like `p1.x` or `rect.top_left.x`
+        # This handles expressions like `p1.x`, `rect.top_left.x`, or `Color.RED`
         
         # First, get the type of the object being accessed
         if isinstance(node.value, ast.Name):
-            # Simple variable access like `p.x`
-            var_name = node.value.id
-            var_symbol = self.symbol_table.lookup(var_name)
-            if not var_symbol:
-                raise NameError(f"Variable '{var_name}' not declared.")
+            # Simple access like `p.x` or `Color.RED`
+            name = node.value.id
+            symbol = self.symbol_table.lookup(name)
+            if not symbol:
+                raise NameError(f"Name '{name}' not declared.")
             
-            # Get the type of the variable
-            if var_symbol.type == 'struct':
-                struct_symbol = var_symbol
+            # Check if this is enum member access (EnumName.MEMBER)
+            if symbol.type == 'enum':
+                member_name = node.attr
+                if member_name not in symbol.enum_members:
+                    raise NameError(f"Enum '{name}' has no member '{member_name}'.")
+                # Return the enum type name for enum member access
+                return name
+            
+            # Handle struct field access
+            if symbol.type == 'struct':
+                struct_symbol = symbol
+                object_type = symbol.type
             else:
                 # It's a variable of a struct type
-                struct_symbol = self.symbol_table.lookup(var_symbol.type)
+                struct_symbol = self.symbol_table.lookup(symbol.type)
                 if not struct_symbol or struct_symbol.type != 'struct':
-                    raise TypeError(f"Variable '{var_name}' is not a struct and has no attributes.")
+                    raise TypeError(f"Variable '{name}' is not a struct and has no attributes.")
+                object_type = symbol.type
             
-            object_type = var_symbol.type
         else:
             # Complex expression like `rect.top_left.x` - recursively get the type
             object_type = self.visit(node.value)
@@ -428,7 +554,7 @@ class SemanticAnalyzer(ast.NodeVisitor):
         label = self._get_preceding_label(node)
         if label:
             self.loop_labels.append(label)
-
+        
         for statement in node.body:
             self.visit(statement)
         
@@ -628,8 +754,52 @@ class SemanticAnalyzer(ast.NodeVisitor):
                         raise TypeError(f"Argument {i+1} of function '{func_name}' has type {arg_type}, but expected {expected_type}.")
                 
                 return func_symbol.return_type
+        elif isinstance(node.func, ast.Attribute):
+            # Method call (e.g., obj.method())
+            return self._visit_method_call(node)
         else:
-            raise NotImplementedError("Only direct function calls (e.g., func()) are supported.")
+            raise NotImplementedError("Only direct function calls and method calls are supported.")
+
+    def _visit_method_call(self, node):
+        """Handle method calls like obj.method()"""
+        # Get the object being called
+        obj_node = node.func.value
+        method_name = node.func.attr
+        
+        # Get the type of the object
+        if isinstance(obj_node, ast.Name):
+            obj_name = obj_node.id
+            obj_symbol = self.symbol_table.lookup(obj_name)
+            if not obj_symbol:
+                raise NameError(f"Variable '{obj_name}' not defined.")
+            obj_type = obj_symbol.type
+        else:
+            # For more complex expressions, get the type recursively
+            obj_type = self.visit(obj_node)
+        
+        # Look up the struct/interface type definition
+        type_symbol = self.symbol_table.lookup(obj_type)
+        if not type_symbol:
+            raise NameError(f"Type '{obj_type}' not defined.")
+        
+        # Check if the method exists in this type
+        if not type_symbol.methods or method_name not in type_symbol.methods:
+            raise AttributeError(f"Type '{obj_type}' has no method '{method_name}'.")
+        
+        # Get method signature
+        param_types, return_type = type_symbol.methods[method_name]
+        
+        # Validate arguments (excluding 'self')
+        if len(node.args) != len(param_types):
+            raise TypeError(f"Method '{method_name}' expects {len(param_types)} arguments, but got {len(node.args)}.")
+        
+        for i, arg_node in enumerate(node.args):
+            arg_type = self.visit(arg_node)
+            expected_type = param_types[i]
+            if arg_type != expected_type:
+                raise TypeError(f"Argument {i+1} of method '{method_name}' has type {arg_type}, but expected {expected_type}.")
+        
+        return return_type
 
     def visit_Expr(self, node):
         # Visit the expression, but don't return its type

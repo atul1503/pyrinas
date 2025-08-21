@@ -37,6 +37,8 @@ EXAMPLES = [
     ('integration_complex_control_flow', '0\n7\n'),
     ('integration_kitchen_sink', '48\n1\n5\n2\n30\n'),
     ('integration_memory_pointers_functions', '14\n255\n'),
+    ('interfaces', 'Drawing rectangle\n50\nDrawing circle\n27\n'),
+    ('enums', 'Red color selected\nStatus is pending\n0\n1\n2\n3\n'),
 ]
 
 @pytest.mark.parametrize("example, expected_output", EXAMPLES)

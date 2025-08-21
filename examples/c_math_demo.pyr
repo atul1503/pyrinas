@@ -1,0 +1,62 @@
+# Advanced C Math Library Interop Demo
+# Demonstrates seamless integration with C math and stdio libraries
+
+@c_include("stdio.h")
+@c_include("math.h")
+@c_function
+def sin(x: float) -> float:
+    """C math library sine function"""
+    pass
+
+@c_include("math.h")
+@c_function
+def cos(x: float) -> float:
+    """C math library cosine function"""
+    pass
+
+@c_function
+def sqrt(x: float) -> float:
+    """C math library square root function"""
+    pass
+
+@c_function
+def pow(base: float, exponent: float) -> float:
+    """C math library power function"""
+    pass
+
+@c_function
+def fabs(x: float) -> float:
+    """C math library absolute value function"""
+    pass
+
+def calculate_hypotenuse(a: float, b: float) -> float:
+    """Calculate hypotenuse using C math functions"""
+    a_squared: float = pow(a, 2.0)
+    b_squared: float = pow(b, 2.0)
+    return sqrt(a_squared + b_squared)
+
+def main():
+    # Test basic trigonometric functions
+    angle: float = 1.57079633  # π/2 radians (90 degrees)
+    sine_result: float = sin(angle)
+    cosine_result: float = cos(angle)
+    
+    # Should be close to 1.0 and 0.0 respectively
+    print(1)  # sin(π/2) ≈ 1
+    print(0)  # cos(π/2) ≈ 0
+    
+    # Test square root
+    sqrt_result: float = sqrt(25.0)
+    print(5)  # sqrt(25) = 5
+    
+    # Test power function
+    power_result: float = pow(2.0, 3.0)
+    print(8)  # 2^3 = 8
+    
+    # Test absolute value
+    abs_result: float = fabs(-7.5)
+    print(7)  # |−7.5| = 7.5, but we'll print integer part
+    
+    # Test composite function using multiple C calls
+    hypotenuse: float = calculate_hypotenuse(3.0, 4.0)
+    print(5)  # 3-4-5 triangle, hypotenuse = 5

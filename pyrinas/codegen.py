@@ -2,11 +2,12 @@ import ast
 import re
 
 class CCodeGenerator(ast.NodeVisitor):
-    def __init__(self, symbol_table):
+    def __init__(self, symbol_table, semantic_analyzer=None):
         self.main_code = []
         self.function_definitions = []
         self.struct_definitions = []
         self.symbol_table = symbol_table
+        self.semantic_analyzer = semantic_analyzer
         self.indent_level = 0
         self.current_code_list = None
         self.local_vars = {}  # Track variable types as we encounter them
@@ -32,12 +33,19 @@ class CCodeGenerator(ast.NodeVisitor):
                 self.visit(item)
 
     def visit_FunctionDef(self, node):
+        # Get function symbol
+        func_symbol = self.symbol_table.lookup(node.name)
+        
+        # Check if this is an external C function
+        if func_symbol and hasattr(func_symbol, 'is_c_function') and func_symbol.is_c_function:
+            # Skip generating definition for external C functions
+            return
+        
         if node.name == 'main':
             self.current_code_list = self.main_code
             self.main_code.append('int main() {')
         else:
             self.current_code_list = []
-            func_symbol = self.symbol_table.lookup(node.name)
             return_type_str = func_symbol.return_type
             
             # Handle functions without return types
@@ -659,4 +667,31 @@ class CCodeGenerator(ast.NodeVisitor):
 
     def generate(self, tree):
         self.visit(tree)
-        return '#include "pyrinas.h"\n\n' + '\n'.join(self.struct_definitions) + '\n\n' + '\n'.join(self.function_definitions) + '\n\n' + '\n'.join(self.main_code)
+        
+        # Build the C code
+        c_code = []
+        
+        # Add standard pyrinas header
+        c_code.append('#include "pyrinas.h"')
+        
+        # Add C interop headers if available
+        if self.semantic_analyzer and hasattr(self.semantic_analyzer, 'c_includes'):
+            for header in sorted(self.semantic_analyzer.c_includes):
+                c_code.append(f'#include <{header}>')
+        
+        c_code.append('')  # Empty line
+        
+        # Add struct definitions
+        if self.struct_definitions:
+            c_code.extend(self.struct_definitions)
+            c_code.append('')
+        
+        # Add function definitions
+        if self.function_definitions:
+            c_code.extend(self.function_definitions)
+            c_code.append('')
+        
+        # Add main code
+        c_code.extend(self.main_code)
+        
+        return '\n'.join(c_code)

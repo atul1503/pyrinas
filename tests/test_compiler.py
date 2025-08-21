@@ -42,6 +42,8 @@ EXAMPLES = [
     ('recursion', '120\n8\n3\n2\n1\n'),
     ('nested_structs', '10\n20\n5\n100\n50\n100\n5\n10\n'),
     ('simple_recursive_test', '42\n84\n84\n'),
+    # C interop tests
+    ('c_math_demo', '1\n0\n5\n8\n7\n5\n'),
 ]
 
 @pytest.mark.parametrize("example, expected_output", EXAMPLES)

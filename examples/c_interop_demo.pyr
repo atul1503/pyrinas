@@ -1,0 +1,62 @@
+# C Interop Demo - Seamless integration with C libraries
+
+# Declare C functions with automatic type mapping
+@c_include("stdio.h")
+@c_include("math.h") 
+@c_include("string.h")
+@c_function
+def sprintf(buffer: ptr[str], format: str, value: int) -> int:
+    """C sprintf function for formatted string creation"""
+    pass
+
+@c_function
+def sin(x: float) -> float:
+    """C math library sine function"""
+    pass
+
+@c_function
+def cos(x: float) -> float:
+    """C math library cosine function"""
+    pass
+
+@c_function
+def sqrt(x: float) -> float:
+    """C math library square root function"""
+    pass
+
+@c_function
+def strlen(s: str) -> int:
+    """C string length function"""
+    pass
+
+@c_function
+def strcmp(s1: str, s2: str) -> int:
+    """C string comparison function"""
+    pass
+
+def main():
+    # Test math functions
+    x: float = 3.14159
+    sine_val: float = sin(x)
+    cosine_val: float = cos(x)
+    sqrt_val: float = sqrt(16.0)
+    
+    print(sine_val)   # Should print ~0.0
+    print(cosine_val) # Should print ~-1.0
+    print(sqrt_val)   # Should print 4.0
+    
+    # Test string functions
+    hello: str = "Hello, World!"
+    length: int = strlen(hello)
+    print(length)     # Should print 13
+    
+    # Test string comparison
+    str1: str = "abc"
+    str2: str = "abc"
+    str3: str = "def"
+    
+    result1: int = strcmp(str1, str2)  # Should be 0 (equal)
+    result2: int = strcmp(str1, str3)  # Should be < 0 (first < second)
+    
+    print(result1)
+    print(result2)

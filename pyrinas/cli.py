@@ -21,7 +21,7 @@ def compile_file(input_file, output_file_c, output_executable):
     analyzer = SemanticAnalyzer()
     analyzer.visit(tree)
     
-    generator = CCodeGenerator(analyzer.symbol_table)
+    generator = CCodeGenerator(analyzer.symbol_table, analyzer)
     c_code = generator.generate(tree)
     
     with open(output_file_c, 'w', encoding='utf-8') as f:
@@ -29,15 +29,29 @@ def compile_file(input_file, output_file_c, output_executable):
     print(f"Generated C code in {output_file_c}")
 
     # Compile the generated C code
-    compile_c_code(output_file_c, output_executable)
+    c_libraries = list(analyzer.c_libraries) if hasattr(analyzer, 'c_libraries') else []
+    compile_c_code(output_file_c, output_executable, c_libraries)
     print(f"Compiled executable to {output_executable}")
 
-def compile_c_code(input_file, output_file):
+def compile_c_code(input_file, output_file, c_libraries=None):
     """
     Compiles a C file into an executable.
     """
+    if c_libraries is None:
+        c_libraries = []
+    
+    # Build gcc command
+    gcc_cmd = ['gcc', '-I', 'runtime', '-o', output_file, input_file, 'runtime/pyrinas.o']
+    
+    # Add math library by default for math functions
+    gcc_cmd.append('-lm')
+    
+    # Add additional C libraries
+    for lib in c_libraries:
+        gcc_cmd.append(f'-l{lib}')
+    
     try:
-        subprocess.run(['gcc', '-I', 'runtime', '-o', output_file, input_file, 'runtime/pyrinas.o'], check=True)
+        subprocess.run(gcc_cmd, check=True)
     except subprocess.CalledProcessError as e:
         print(f"Error during C compilation: {e}")
         exit(1)

@@ -2,7 +2,7 @@ import ast
 import re
 
 class Symbol:
-    def __init__(self, name, type, param_types=None, return_type=None, fields=None, immutable=False, methods=None, implements=None, enum_members=None):
+    def __init__(self, name, type, param_types=None, return_type=None, fields=None, immutable=False, methods=None, implements=None, enum_members=None, is_c_function=False, c_library=None):
         self.name = name
         self.type = type
         self.param_types = param_types
@@ -12,6 +12,9 @@ class Symbol:
         self.methods = methods or {} # For interfaces: method_name -> (param_types, return_type)
         self.implements = implements or [] # For structs: list of interface names they implement
         self.enum_members = enum_members or {} # For enums: member_name -> value
+        # C interop attributes
+        self.is_c_function = is_c_function # Whether this is a C function
+        self.c_library = c_library # C library name (if any)
 
 class SymbolTable:
     def __init__(self):
@@ -44,6 +47,10 @@ class SemanticAnalyzer(ast.NodeVisitor):
         self.current_function_return_type = None
         self.loop_depth = 0
         self.loop_labels = []
+        # C interop tracking
+        self.c_includes = set()  # Set of C headers to include
+        self.c_functions = {}    # Function name -> C library info
+        self.c_libraries = set() # Set of C libraries to link
     
     def _get_type_name(self, annotation):
         """Extract type name from annotation node (handles both ast.Name and ast.Constant)"""
@@ -51,8 +58,55 @@ class SemanticAnalyzer(ast.NodeVisitor):
             return annotation.id
         elif isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
             return annotation.value
+        elif isinstance(annotation, ast.Subscript):
+            # Handle subscript annotations like ptr[str], array[int, 5], Result[int, str]
+            base_name = getattr(annotation.value, 'id', None)
+            if base_name == 'ptr':
+                inner_type = getattr(annotation.slice, 'id', None)
+                return f'ptr[{inner_type}]'
+            elif base_name == 'array':
+                if isinstance(annotation.slice, ast.Tuple) and len(annotation.slice.elts) == 2:
+                    type_name = getattr(annotation.slice.elts[0], 'id', None)
+                    size = annotation.slice.elts[1].value
+                    return f'array[{type_name},{size}]'
+            elif base_name == 'Result':
+                if isinstance(annotation.slice, ast.Tuple) and len(annotation.slice.elts) == 2:
+                    success_type = getattr(annotation.slice.elts[0], 'id', None)
+                    error_type = getattr(annotation.slice.elts[1], 'id', None)
+                    return f'Result[{success_type},{error_type}]'
+            return None
         else:
             return None
+
+    def _process_decorators(self, decorators):
+        """Process function decorators for C interop"""
+        is_c_function = False
+        c_library = None
+        
+        for decorator in decorators:
+            if isinstance(decorator, ast.Name):
+                if decorator.id == 'c_function':
+                    is_c_function = True
+                elif decorator.id == 'c_include':
+                    # This should be handled at module level, not function level
+                    pass
+            elif isinstance(decorator, ast.Call):
+                if isinstance(decorator.func, ast.Name):
+                    if decorator.func.id == 'c_function' and decorator.args:
+                        is_c_function = True
+                        if isinstance(decorator.args[0], ast.Constant):
+                            c_library = decorator.args[0].value
+                    elif decorator.func.id == 'c_include' and decorator.args:
+                        if isinstance(decorator.args[0], ast.Constant):
+                            self.c_includes.add(decorator.args[0].value)
+        
+        return is_c_function, c_library
+
+    def _is_external_function(self, node):
+        """Check if a function is external (has only pass statements)"""
+        if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
+            return True
+        return False
 
     def visit_Module(self, node):
         # Ensure 'main' function is defined
@@ -69,6 +123,9 @@ class SemanticAnalyzer(ast.NodeVisitor):
             if isinstance(item, ast.FunctionDef):
                 # Register function signature without visiting its body
                 func_name = item.name
+                
+                # Process decorators for C interop
+                is_c_function, c_library = self._process_decorators(item.decorator_list)
                 
                 # Determine return type
                 return_type = None
@@ -99,10 +156,17 @@ class SemanticAnalyzer(ast.NodeVisitor):
                         raise TypeError(f"Parameter '{arg.arg}' must have a type annotation.")
                     param_types.append(type_name)
                 
+                # Handle C function registration
+                if is_c_function:
+                    self.c_functions[func_name] = c_library
+                    if c_library:
+                        self.c_libraries.add(c_library)
+                
                 # Register the function
                 if self.symbol_table.lookup_current_scope(func_name):
                     raise NameError(f"Function '{func_name}' already defined.")
-                self.symbol_table.insert(Symbol(func_name, 'function', param_types=param_types, return_type=return_type))
+                symbol = Symbol(func_name, 'function', param_types=param_types, return_type=return_type, is_c_function=is_c_function, c_library=c_library)
+                self.symbol_table.insert(symbol)
             elif isinstance(item, ast.ClassDef):
                 # Register struct definition
                 self.visit_ClassDef(item)
@@ -276,9 +340,18 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 raise TypeError(f"Parameter '{var_name}' must have a type annotation.")
             self.symbol_table.insert(Symbol(var_name, type_name))
 
-        # Visit the function body
-        for statement in node.body:
-            self.visit(statement)
+        # Check if this is an external C function
+        is_c_function, _ = self._process_decorators(node.decorator_list)
+        is_external = self._is_external_function(node)
+        
+        # For external C functions, skip body validation
+        if is_c_function and is_external:
+            # External C function - skip body processing
+            pass
+        else:
+            # Visit the function body for regular functions
+            for statement in node.body:
+                self.visit(statement)
 
         # Pop the scope after visiting the body
         self.symbol_table.pop_scope()

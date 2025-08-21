@@ -26,6 +26,7 @@ EXAMPLES = [
     ('arrays', '0\n10\n20\n30\n40\n'),
     ('structs', '10\n20.500000\n10\n30\n'),
     ('errors', '5\ndivision by zero\n'),
+    ('immutable', '5\n10\n42\n'),
     # Integration tests - combining multiple features
     ('integration_simple', '3\n4\n25\n'),
     ('integration_functions_arrays', '10\n14\n60\n14\n'),

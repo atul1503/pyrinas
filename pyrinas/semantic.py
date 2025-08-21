@@ -2,12 +2,13 @@ import ast
 import re
 
 class Symbol:
-    def __init__(self, name, type, param_types=None, return_type=None, fields=None):
+    def __init__(self, name, type, param_types=None, return_type=None, fields=None, immutable=False):
         self.name = name
         self.type = type
         self.param_types = param_types
         self.return_type = return_type
         self.fields = fields # For structs
+        self.immutable = immutable # Whether this variable is immutable
 
 class SymbolTable:
     def __init__(self):
@@ -155,6 +156,8 @@ class SemanticAnalyzer(ast.NodeVisitor):
         var_name = node.target.id
         
         type_name = None
+        is_immutable = False
+        
         if isinstance(node.annotation, ast.Name):
             type_name = node.annotation.id
         elif isinstance(node.annotation, ast.Constant) and isinstance(node.annotation.value, str):
@@ -166,29 +169,54 @@ class SemanticAnalyzer(ast.NodeVisitor):
             else:
                 raise TypeError(f"Invalid string annotation: {type_str}. Only 'ptr[...]' and 'array[...]' are supported.")
         elif isinstance(node.annotation, ast.Subscript):
-            if getattr(node.annotation.value, 'id', None) != 'array':
-                raise TypeError("Only 'array' is supported for subscript type annotations.")
+            annotation_name = getattr(node.annotation.value, 'id', None)
             
-            # The slice for an array annotation should be a tuple of (type, size)
-            if not isinstance(node.annotation.slice, ast.Tuple) or len(node.annotation.slice.elts) != 2:
-                raise TypeError("Array annotation requires a tuple of [type, size].")
-            
-            base_type_node = node.annotation.slice.elts[0]
-            size_node = node.annotation.slice.elts[1]
-            
-            base_type = getattr(base_type_node, 'id', None)
-            if not isinstance(size_node, ast.Constant) or not isinstance(size_node.value, int):
-                raise TypeError("Array size must be an integer literal.")
-            size = size_node.value
+            if annotation_name == 'Final':
+                # Handle Final[type] for immutable variables
+                is_immutable = True
+                inner_annotation = node.annotation.slice
+                
+                if isinstance(inner_annotation, ast.Name):
+                    type_name = inner_annotation.id
+                elif isinstance(inner_annotation, ast.Constant) and isinstance(inner_annotation.value, str):
+                    type_str = inner_annotation.value
+                    if type_str.startswith('ptr[') and type_str.endswith(']'):
+                        type_name = type_str
+                    elif type_str.startswith('array[') and type_str.endswith(']'):
+                        type_name = type_str
+                    else:
+                        raise TypeError(f"Invalid Final annotation: {type_str}")
+                else:
+                    raise TypeError("Final annotation must contain a simple type.")
+                
+            elif annotation_name == 'array':
+                # Handle array[type, size] annotations
+                # The slice for an array annotation should be a tuple of (type, size)
+                if not isinstance(node.annotation.slice, ast.Tuple) or len(node.annotation.slice.elts) != 2:
+                    raise TypeError("Array annotation requires a tuple of [type, size].")
+                
+                base_type_node = node.annotation.slice.elts[0]
+                size_node = node.annotation.slice.elts[1]
+                
+                base_type = getattr(base_type_node, 'id', None)
+                if not isinstance(size_node, ast.Constant) or not isinstance(size_node.value, int):
+                    raise TypeError("Array size must be an integer literal.")
+                size = size_node.value
 
-            type_name = f'array[{base_type},{size}]'
+                type_name = f'array[{base_type},{size}]'
+            else:
+                raise TypeError(f"Unsupported subscript type annotation: {annotation_name}")
         else:
-            raise TypeError("Type annotation must be a name, a pointer string, or an array annotation.")
+            raise TypeError("Type annotation must be a name, a pointer string, an array annotation, or Final[type].")
 
         if self.symbol_table.lookup_current_scope(var_name):
             raise NameError(f"Variable '{var_name}' already declared in this scope.")
+        
+        # Immutable variables must be initialized at declaration
+        if is_immutable and not node.value:
+            raise TypeError(f"Immutable variable '{var_name}' must be initialized at declaration.")
             
-        self.symbol_table.insert(Symbol(var_name, type_name))
+        self.symbol_table.insert(Symbol(var_name, type_name, immutable=is_immutable))
         
         if node.value:
             value_type = self.visit(node.value)
@@ -197,6 +225,49 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 pass # This is a valid assignment
             elif value_type != type_name and not (type_name == 'bool' and value_type == 'int'):
                 raise TypeError(f"Type mismatch assigning to '{var_name}': expected {type_name}, got {value_type}")
+    
+    def visit_Assign(self, node):
+        """Handle assignments and check for immutability violations"""
+        for target in node.targets:
+            if isinstance(target, ast.Name):
+                var_name = target.id
+                symbol = self.symbol_table.lookup(var_name)
+                
+                if not symbol:
+                    raise NameError(f"Variable '{var_name}' not defined.")
+                    
+                if symbol.immutable:
+                    raise TypeError(f"Cannot reassign immutable variable '{var_name}'.")
+                    
+                # Type check the assignment
+                value_type = self.visit(node.value)
+                if value_type != symbol.type and not (symbol.type == 'bool' and value_type == 'int'):
+                    raise TypeError(f"Type mismatch assigning to '{var_name}': expected {symbol.type}, got {value_type}")
+                    
+            elif isinstance(target, ast.Subscript):
+                # Handle array/subscript assignments - check if the array itself is immutable
+                var_name = getattr(target.value, 'id', None)
+                if var_name:
+                    symbol = self.symbol_table.lookup(var_name)
+                    if symbol and symbol.immutable:
+                        raise TypeError(f"Cannot modify immutable array '{var_name}'.")
+                # Continue with normal subscript processing
+                self.visit(target)
+                self.visit(node.value)
+            elif isinstance(target, ast.Attribute):
+                # Handle struct field assignments - check if the struct itself is immutable
+                var_name = getattr(target.value, 'id', None)
+                if var_name:
+                    symbol = self.symbol_table.lookup(var_name)
+                    if symbol and symbol.immutable:
+                        raise TypeError(f"Cannot modify immutable struct '{var_name}'.")
+                # Continue with normal attribute processing
+                self.visit(target)
+                self.visit(node.value)
+            else:
+                # For other assignment types, just visit normally
+                self.visit(target)
+                self.visit(node.value)
 
     def visit_Name(self, node):
         if isinstance(node.ctx, ast.Load):
@@ -436,6 +507,13 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 for arg in node.args:
                     self.visit(arg)
                 return # print doesn't return a value we care about for type checking
+            elif func_name in ('int', 'float', 'str', 'bool'):
+                # Built-in type conversion functions
+                if len(node.args) != 1:
+                    raise TypeError(f"{func_name}() expects exactly one argument.")
+                arg_type = self.visit(node.args[0])
+                # Type conversions are generally allowed between basic types
+                return func_name
             elif func_name == 'range':
                 if len(node.args) != 1 or not isinstance(node.args[0], ast.Constant) or not isinstance(node.args[0].value, int):
                     raise TypeError("range() expects exactly one integer argument.")

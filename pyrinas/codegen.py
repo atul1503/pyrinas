@@ -76,19 +76,36 @@ class CCodeGenerator(ast.NodeVisitor):
     def visit_AnnAssign(self, node):
         var_name = node.target.id
         type_name = None
-        c_type = None
+        is_immutable = False
 
         if isinstance(node.annotation, ast.Name):
             type_name = node.annotation.id
         elif isinstance(node.annotation, ast.Constant) and isinstance(node.annotation.value, str):
             type_name = node.annotation.value
         elif isinstance(node.annotation, ast.Subscript):
-             if getattr(node.annotation.value, 'id', None) == 'array':
+            annotation_name = getattr(node.annotation.value, 'id', None)
+            
+            if annotation_name == 'Final':
+                # Handle Final[type] for immutable variables
+                is_immutable = True
+                inner_annotation = node.annotation.slice
+                
+                if isinstance(inner_annotation, ast.Name):
+                    type_name = inner_annotation.id
+                elif isinstance(inner_annotation, ast.Constant) and isinstance(inner_annotation.value, str):
+                    type_name = inner_annotation.value
+                else:
+                    raise TypeError("Final annotation must contain a simple type.")
+                    
+            elif annotation_name == 'array':
+                # Handle array[type, size] annotations
                 base_type_node = node.annotation.slice.elts[0]
                 size_node = node.annotation.slice.elts[1]
                 base_type = getattr(base_type_node, 'id', None)
                 size = size_node.value
                 type_name = f'array[{base_type},{size}]'
+            else:
+                raise TypeError(f"Unsupported subscript annotation: {annotation_name}")
         else:
             raise TypeError("Unsupported type annotation for code generation.")
 
@@ -97,19 +114,21 @@ class CCodeGenerator(ast.NodeVisitor):
             match = re.match(r'array\[(\w+),\s*(\d+)\]', type_name)
             base_type, size = match.groups()
             c_base_type = self._c_type_from_pyrinas_type(base_type)
-            self.current_code_list.append(f'{self._indent()}{c_base_type} {var_name}[{size}];')
+            const_prefix = 'const ' if is_immutable else ''
+            self.current_code_list.append(f'{self._indent()}{const_prefix}{c_base_type} {var_name}[{size}];')
             self.local_vars[var_name] = type_name
             return
 
         c_type = self._c_type_from_pyrinas_type(type_name)
+        const_prefix = 'const ' if is_immutable else ''
         
         # Track the variable type for print statements
         self.local_vars[var_name] = type_name
         
         if node.value:
-            self.current_code_list.append(f'{self._indent()}{c_type} {var_name} = {self.visit(node.value)};')
+            self.current_code_list.append(f'{self._indent()}{const_prefix}{c_type} {var_name} = {self.visit(node.value)};')
         else:
-            self.current_code_list.append(f'{self._indent()}{c_type} {var_name};')
+            self.current_code_list.append(f'{self._indent()}{const_prefix}{c_type} {var_name};')
 
     def visit_Assign(self, node):
         target = self.visit(node.targets[0])
@@ -324,6 +343,14 @@ class CCodeGenerator(ast.NodeVisitor):
         elif node.func.id in ('Ok', 'Err'):
             # These are handled in visit_Return, here we just visit the value
             return self.visit(node.args[0])
+        elif node.func.id in ('int', 'float', 'str', 'bool'):
+            # Type conversion functions
+            if len(node.args) != 1:
+                raise TypeError(f"{node.func.id}() expects exactly one argument.")
+            arg_expr = self.visit(node.args[0])
+            # Convert to C-style type casts
+            c_type = self._c_type_from_pyrinas_type(node.func.id)
+            return f'({c_type}){arg_expr}'
         else:
             # Check if this is a struct constructor call
             struct_symbol = self.symbol_table.lookup(node.func.id)
@@ -370,7 +397,7 @@ class CCodeGenerator(ast.NodeVisitor):
             else:
                 raise TypeError(f"Invalid array type format: {type_str}")
         else:
-            c_type = {'int': 'int', 'float': 'float', 'bool': 'int'}.get(type_str)
+            c_type = {'int': 'int', 'float': 'float', 'bool': 'int', 'str': 'char*'}.get(type_str)
             if c_type:
                 return c_type
             # Assume it's a struct type if not a primitive

@@ -1,0 +1,34 @@
+# Comprehensive error handling example with Result utilities
+
+def divide(a: int, b: int) -> Result[int,str]:
+    if b == 0:
+        return Err("division by zero")
+    return Ok(a // b)
+
+def safe_sqrt(n: int) -> Result[int,str]:
+    if n < 0:
+        return Err("cannot take square root of negative number")
+    # Simplified integer square root
+    return Ok(n)
+
+def main():
+    # Test divide function
+    result1: Result[int,str] = divide(10, 2)
+    result2: Result[int,str] = divide(10, 0)
+    
+    # Test is_ok and is_err
+    if is_ok(result1):
+        value: int = unwrap_int(result1)
+        print(value)  # Should print 5
+    
+    if is_err(result2):
+        print(1)  # Should print 1 to indicate error was detected
+    
+    # Test unwrap_or for safe defaults
+    safe_value: int = unwrap_or_int(result2, -1)
+    print(safe_value)  # Should print -1
+    
+    # Test expect with custom message
+    good_result: Result[int,str] = divide(8, 2) 
+    final_value: int = expect_int(good_result, "Division should work")
+    print(final_value)  # Should print 4

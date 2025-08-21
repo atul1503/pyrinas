@@ -81,6 +81,15 @@ class SemanticAnalyzer(ast.NodeVisitor):
                         success_type = getattr(item.returns.elts[0], 'id', 'unknown')
                         error_type = getattr(item.returns.elts[1], 'id', 'unknown')
                         return_type = f'Result[{success_type},{error_type}]'
+                    elif isinstance(item.returns, ast.Subscript) and getattr(item.returns.value, 'id', None) == 'Result':
+                        # Handle Result[type1,type2] syntax
+                        if isinstance(item.returns.slice, ast.Tuple) and len(item.returns.slice.elts) == 2:
+                            success_type = getattr(item.returns.slice.elts[0], 'id', 'unknown')
+                            error_type = getattr(item.returns.slice.elts[1], 'id', 'unknown')
+                            return_type = f'Result[{success_type},{error_type}]'
+                    elif isinstance(item.returns, ast.Constant) and item.returns.value is None:
+                        # Handle None return type
+                        return_type = None
                 
                 # Extract parameter types
                 param_types = []
@@ -241,6 +250,19 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 success_type = getattr(node.returns.elts[0], 'id', 'unknown')
                 error_type = getattr(node.returns.elts[1], 'id', 'unknown')
                 return_type = f'Result[{success_type},{error_type}]'
+            elif isinstance(node.returns, ast.Subscript) and getattr(node.returns.value, 'id', None) == 'Result':
+                # Handle Result[type1,type2] syntax
+                if isinstance(node.returns.slice, ast.Tuple) and len(node.returns.slice.elts) == 2:
+                    success_type = getattr(node.returns.slice.elts[0], 'id', 'unknown')
+                    error_type = getattr(node.returns.slice.elts[1], 'id', 'unknown')
+                    return_type = f'Result[{success_type},{error_type}]'
+                else:
+                    raise TypeError("Result return type must have exactly two type parameters.")
+            elif isinstance(node.returns, ast.Constant) and node.returns.value is None:
+                # Handle None return type
+                return_type = None
+            else:
+                raise TypeError("Unsupported return type annotation.")
         self.current_function_return_type = return_type
 
         # Push a new scope for function parameters and local variables
@@ -314,10 +336,25 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 size = size_node.value
 
                 type_name = f'array[{base_type},{size}]'
+            elif annotation_name == 'Result':
+                # Handle Result[success_type, error_type] annotations
+                if not isinstance(node.annotation.slice, ast.Tuple) or len(node.annotation.slice.elts) != 2:
+                    raise TypeError("Result annotation requires a tuple of [success_type, error_type].")
+                
+                success_type_node = node.annotation.slice.elts[0]
+                error_type_node = node.annotation.slice.elts[1]
+                
+                success_type = getattr(success_type_node, 'id', None)
+                error_type = getattr(error_type_node, 'id', None)
+                
+                if not success_type or not error_type:
+                    raise TypeError("Result types must be simple type names.")
+
+                type_name = f'Result[{success_type},{error_type}]'
             else:
                 raise TypeError(f"Unsupported subscript type annotation: {annotation_name}")
         else:
-            raise TypeError("Type annotation must be a name, a pointer string, an array annotation, or Final[type].")
+            raise TypeError("Type annotation must be a name, a pointer string, an array annotation, Result[type1,type2], or Final[type].")
         
         if self.symbol_table.lookup_current_scope(var_name):
             raise NameError(f"Variable '{var_name}' already declared in this scope.")
@@ -728,6 +765,40 @@ class SemanticAnalyzer(ast.NodeVisitor):
                     raise TypeError(f"{func_name}() expects exactly one argument.")
                 inner_type = self.visit(node.args[0])
                 return f'{func_name}[{inner_type}]'
+            elif func_name in ('is_ok', 'is_err'):
+                if len(node.args) != 1:
+                    raise TypeError(f"{func_name}() expects exactly one argument.")
+                arg_type = self.visit(node.args[0])
+                # The argument should be a Result type (we'll be flexible about the exact format)
+                return 'bool'
+            elif func_name.startswith('unwrap_or_'):
+                if len(node.args) != 2:
+                    raise TypeError(f"{func_name}() expects exactly two arguments.")
+                result_type = self.visit(node.args[0])
+                default_type = self.visit(node.args[1])
+                # Extract the type from the function name
+                return_type = func_name[10:]  # Remove 'unwrap_or_' prefix
+                # Verify the default value matches the expected type
+                if default_type != return_type:
+                    raise TypeError(f"Default value type {default_type} doesn't match expected type {return_type}")
+                return return_type
+            elif func_name.startswith('unwrap_'):
+                if len(node.args) != 1:
+                    raise TypeError(f"{func_name}() expects exactly one argument.")
+                arg_type = self.visit(node.args[0])
+                # Extract the type from the function name (unwrap_int -> int, unwrap_str -> str, etc.)
+                return_type = func_name[7:]  # Remove 'unwrap_' prefix
+                return return_type
+            elif func_name.startswith('expect_'):
+                if len(node.args) != 2:
+                    raise TypeError(f"{func_name}() expects exactly two arguments.")
+                result_type = self.visit(node.args[0])
+                message_type = self.visit(node.args[1])
+                if message_type != 'str':
+                    raise TypeError(f"Second argument to {func_name}() must be a string, got {message_type}")
+                # Extract the type from the function name
+                return_type = func_name[7:]  # Remove 'expect_' prefix
+                return return_type
             else:
                 # Check if this is a struct constructor call
                 struct_symbol = self.symbol_table.lookup(func_name)

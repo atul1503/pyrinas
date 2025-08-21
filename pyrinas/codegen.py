@@ -251,6 +251,13 @@ class CCodeGenerator(ast.NodeVisitor):
                 base_type = getattr(base_type_node, 'id', None)
                 size = size_node.value
                 type_name = f'array[{base_type},{size}]'
+            elif annotation_name == 'Result':
+                # Handle Result[success_type, error_type] annotations
+                success_type_node = node.annotation.slice.elts[0]
+                error_type_node = node.annotation.slice.elts[1]
+                success_type = getattr(success_type_node, 'id', None)
+                error_type = getattr(error_type_node, 'id', None)
+                type_name = f'Result[{success_type},{error_type}]'
             else:
                 raise TypeError(f"Unsupported subscript annotation: {annotation_name}")
         else:
@@ -441,7 +448,14 @@ class CCodeGenerator(ast.NodeVisitor):
                 self.loop_labels.pop()
 
     def visit_UnaryOp(self, node):
-        return f'(!{self.visit(node.operand)})' if isinstance(node.op, ast.Not) else self.visit(node.operand)
+        if isinstance(node.op, ast.Not):
+            return f'(!{self.visit(node.operand)})'
+        elif isinstance(node.op, ast.USub):
+            return f'(-{self.visit(node.operand)})'
+        elif isinstance(node.op, ast.UAdd):
+            return f'(+{self.visit(node.operand)})'
+        else:
+            return self.visit(node.operand)
 
     def visit_Call(self, node):
         # Check if this is a method call (obj.method()) or function call (func())
@@ -520,6 +534,20 @@ class CCodeGenerator(ast.NodeVisitor):
             elif node.func.id in ('Ok', 'Err'):
                 # These are handled in visit_Return, here we just visit the value
                 return self.visit(node.args[0])
+            elif node.func.id in ('is_ok', 'is_err'):
+                arg_expr = self.visit(node.args[0])
+                return f'{node.func.id}({arg_expr})'
+            elif node.func.id.startswith('unwrap_or_'):
+                result_expr = self.visit(node.args[0])
+                default_expr = self.visit(node.args[1])
+                return f'{node.func.id}({result_expr}, {default_expr})'
+            elif node.func.id.startswith('unwrap_'):
+                arg_expr = self.visit(node.args[0])
+                return f'{node.func.id}({arg_expr})'
+            elif node.func.id.startswith('expect_'):
+                result_expr = self.visit(node.args[0])
+                message_expr = self.visit(node.args[1])
+                return f'{node.func.id}({result_expr}, {message_expr})'
             elif node.func.id in ('int', 'float', 'str', 'bool'):
                 # Type conversion functions
                 if len(node.args) != 1:
@@ -600,6 +628,9 @@ class CCodeGenerator(ast.NodeVisitor):
                 return self._c_type_from_pyrinas_type(base_type) + '*'
             else:
                 raise TypeError(f"Invalid array type format: {type_str}")
+        elif type_str.startswith('Result[') and type_str.endswith(']'):
+            # Result types map to the C Result struct
+            return 'Result'
         else:
             c_type = {'int': 'int', 'float': 'float', 'bool': 'int', 'str': 'char*', 'void': 'void'}.get(type_str)
             if c_type:

@@ -36,6 +36,8 @@ class SemanticAnalyzer(ast.NodeVisitor):
     def __init__(self):
         self.symbol_table = SymbolTable()
         self.current_function_return_type = None
+        self.loop_depth = 0
+        self.loop_labels = []
 
     def visit_Module(self, node):
         # Ensure 'main' function is defined
@@ -149,8 +151,18 @@ class SemanticAnalyzer(ast.NodeVisitor):
         if test_type != 'bool':
             raise TypeError("While condition must be a boolean expression.")
         
+        self.loop_depth += 1
+        # Check for a label preceding the loop
+        label = self._get_preceding_label(node)
+        if label:
+            self.loop_labels.append(label)
+
         for statement in node.body:
             self.visit(statement)
+        
+        if label:
+            self.loop_labels.pop()
+        self.loop_depth -= 1
 
     def visit_For(self, node):
         # Assume loop variable is int for now
@@ -163,8 +175,18 @@ class SemanticAnalyzer(ast.NodeVisitor):
         self.visit(node.iter)
 
         # Visit the body of the loop
+        self.loop_depth += 1
+        # Check for a label preceding the loop
+        label = self._get_preceding_label(node)
+        if label:
+            self.loop_labels.append(label)
+
         for statement in node.body:
             self.visit(statement)
+
+        if label:
+            self.loop_labels.pop()
+        self.loop_depth -= 1
 
     def visit_UnaryOp(self, node):
         operand_type = self.visit(node.operand)
@@ -174,6 +196,20 @@ class SemanticAnalyzer(ast.NodeVisitor):
             return 'bool'
         else:
             raise NotImplementedError(f"Unary operator {type(node.op).__name__} not implemented.")
+
+    def visit_Break(self, node):
+        if self.loop_depth == 0:
+            raise SyntaxError("'break' outside loop")
+        label = self._get_preceding_label(node)
+        if label and label not in self.loop_labels:
+            raise NameError(f"Label '{label}' not found.")
+
+    def visit_Continue(self, node):
+        if self.loop_depth == 0:
+            raise SyntaxError("'continue' outside loop")
+        label = self._get_preceding_label(node)
+        if label and label not in self.loop_labels:
+            raise NameError(f"Label '{label}' not found.")
 
     def visit_Return(self, node):
         if not self.current_function_return_type:
@@ -231,11 +267,28 @@ class SemanticAnalyzer(ast.NodeVisitor):
         # Visit the expression, but don't return its type
         self.visit(node.value)
 
+    def _get_preceding_label(self, loop_node):
+        # This is a bit of a hack. We need to find the label
+        # that immediately precedes the loop in the AST.
+        if hasattr(loop_node, 'parent'):
+            body = loop_node.parent.body
+            idx = body.index(loop_node)
+            if idx > 0 and isinstance(body[idx - 1], ast.Expr) and isinstance(body[idx - 1].value, ast.Constant) and isinstance(body[idx - 1].value.value, str):
+                return body[idx - 1].value.value
+        return None
+
+class ParentageVisitor(ast.NodeVisitor):
+    def visit(self, node):
+        for child in ast.iter_child_nodes(node):
+            child.parent = node
+        self.generic_visit(node)
+
 if __name__ == '__main__':
     with open('examples/hello.py', 'r') as f:
         code = f.read()
     
     tree = ast.parse(code)
+    ParentageVisitor().visit(tree)
     analyzer = SemanticAnalyzer()
     analyzer.visit(tree)
     print("Semantic analysis successful!")

@@ -8,6 +8,7 @@ class CCodeGenerator(ast.NodeVisitor):
         self.indent_level = 0
         self.current_code_list = None
         self.local_vars = {}  # Track variable types as we encounter them
+        self.loop_labels = []
 
     def _indent(self):
         return "    " * self.indent_level
@@ -71,7 +72,7 @@ class CCodeGenerator(ast.NodeVisitor):
         return str(node.value) if not isinstance(node.value, bool) else ('1' if node.value else '0')
 
     def visit_BinOp(self, node):
-        op_map = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*', ast.Div: '/'}
+        op_map = {ast.Add: '+', ast.Sub: '-', ast.Mult: '*', ast.Div: '/', ast.Mod: '%'}
         return f'({self.visit(node.left)} {op_map[type(node.op)]} {self.visit(node.right)})'
 
     def visit_Compare(self, node):
@@ -81,6 +82,20 @@ class CCodeGenerator(ast.NodeVisitor):
     def visit_BoolOp(self, node):
         op_map = {ast.And: '&&', ast.Or: '||'}
         return f'({op_map[type(node.op)].join([self.visit(v) for v in node.values])})'
+
+    def visit_Break(self, node):
+        label = self._get_preceding_label(node)
+        if label:
+            self.current_code_list.append(f'{self._indent()}goto {label}_break;')
+        else:
+            self.current_code_list.append(f'{self._indent()}break;')
+
+    def visit_Continue(self, node):
+        label = self._get_preceding_label(node)
+        if label:
+            self.current_code_list.append(f'{self._indent()}goto {label}_continue;')
+        else:
+            self.current_code_list.append(f'{self._indent()}continue;')
 
     def visit_If(self, node):
         self.current_code_list.append(f'{self._indent()}if ({self.visit(node.test)}) {{')
@@ -98,6 +113,11 @@ class CCodeGenerator(ast.NodeVisitor):
             self.current_code_list.append(f'{self._indent()}}}')
 
     def visit_While(self, node):
+        label = self._get_preceding_label(node)
+        if label:
+            self.current_code_list.append(f'{self._indent()}{label}:')
+            self.loop_labels.append(label)
+
         self.current_code_list.append(f'{self._indent()}while ({self.visit(node.test)}) {{')
         self.indent_level += 1
         for stmt in node.body:
@@ -105,16 +125,30 @@ class CCodeGenerator(ast.NodeVisitor):
         self.indent_level -= 1
         self.current_code_list.append(f'{self._indent()}}}')
 
+        if label:
+            self.current_code_list.append(f'{self._indent()}{label}_break:;')
+            self.loop_labels.pop()
+
     def visit_For(self, node):
         if isinstance(node.iter, ast.Call) and node.iter.func.id == 'range':
             limit = node.iter.args[0].value
             loop_var = node.target.id
+            
+            label = self._get_preceding_label(node)
+            if label:
+                self.current_code_list.append(f'{self._indent()}{label}:')
+                self.loop_labels.append(label)
+
             self.current_code_list.append(f'{self._indent()}for (int {loop_var} = 0; {loop_var} < {limit}; {loop_var}++) {{')
             self.indent_level += 1
             for stmt in node.body:
                 self.visit(stmt)
             self.indent_level -= 1
             self.current_code_list.append(f'{self._indent()}}}')
+            
+            if label:
+                self.current_code_list.append(f'{self._indent()}{label}_break:;')
+                self.loop_labels.pop()
 
     def visit_UnaryOp(self, node):
         return f'(!{self.visit(node.operand)})' if isinstance(node.op, ast.Not) else self.visit(node.operand)
@@ -161,6 +195,16 @@ class CCodeGenerator(ast.NodeVisitor):
             
     def visit_Return(self, node):
         self.current_code_list.append(f'{self._indent()}return {self.visit(node.value)};')
+
+    def _get_preceding_label(self, loop_node):
+        # This is a bit of a hack. We need to find the label
+        # that immediately precedes the loop in the AST.
+        if hasattr(loop_node, 'parent'):
+            body = loop_node.parent.body
+            idx = body.index(loop_node)
+            if idx > 0 and isinstance(body[idx - 1], ast.Expr) and isinstance(body[idx - 1].value, ast.Constant) and isinstance(body[idx - 1].value.value, str):
+                return body[idx - 1].value.value
+        return None
 
     def generate(self, tree):
         self.visit(tree)

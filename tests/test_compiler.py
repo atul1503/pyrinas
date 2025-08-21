@@ -17,6 +17,9 @@ EXAMPLES = [
     ('variables', '10\n3.140000\n'),
     ('while_loop', '0\n1\n2\n3\n4\n'),
     ('hello', 'Hello, Pyrinas!\n'),
+    ('break', '0\n1\n2\n3\n4\n'),
+    ('continue', '1\n3\n5\n7\n9\n'),
+    ('labeled_break', '0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n1\n2\n3\n4\n5\n6\n7\n8\n9\n0\n2\n4\n6\n8\n10\n12\n14\n16\n18\n0\n3\n6\n9\n12\n15\n18\n21\n24\n27\n0\n4\n8\n12\n16\n20\n24\n28\n'),
 ]
 
 @pytest.mark.parametrize("example, expected_output", EXAMPLES)

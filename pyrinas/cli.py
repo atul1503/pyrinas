@@ -2,7 +2,7 @@ import argparse
 import os
 import subprocess
 from pyrinas.parser import get_ast
-from pyrinas.semantic import SemanticAnalyzer
+from pyrinas.semantic import SemanticAnalyzer, ParentageVisitor
 from pyrinas.codegen import CCodeGenerator
 
 def compile_file(input_file, output_file_c, output_executable):
@@ -17,6 +17,7 @@ def compile_file(input_file, output_file_c, output_executable):
     print("AST DUMP:")
     print(ast.dump(tree, indent=4))
     
+    ParentageVisitor().visit(tree)
     analyzer = SemanticAnalyzer()
     analyzer.visit(tree)
     

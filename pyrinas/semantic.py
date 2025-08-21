@@ -40,6 +40,15 @@ class SemanticAnalyzer(ast.NodeVisitor):
         self.current_function_return_type = None
         self.loop_depth = 0
         self.loop_labels = []
+    
+    def _get_type_name(self, annotation):
+        """Extract type name from annotation node (handles both ast.Name and ast.Constant)"""
+        if isinstance(annotation, ast.Name):
+            return annotation.id
+        elif isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+            return annotation.value
+        else:
+            return None
 
     def visit_Module(self, node):
         # Ensure 'main' function is defined
@@ -70,9 +79,10 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 # Extract parameter types
                 param_types = []
                 for arg in item.args.args:
-                    if not isinstance(arg.annotation, ast.Name):
+                    type_name = self._get_type_name(arg.annotation)
+                    if type_name is None:
                         raise TypeError(f"Parameter '{arg.arg}' must have a type annotation.")
-                    param_types.append(arg.annotation.id)
+                    param_types.append(type_name)
                 
                 # Register the function
                 if self.symbol_table.lookup_current_scope(func_name):
@@ -128,7 +138,9 @@ class SemanticAnalyzer(ast.NodeVisitor):
         # Register parameters in the new scope
         for arg in node.args.args:
             var_name = arg.arg
-            type_name = arg.annotation.id
+            type_name = self._get_type_name(arg.annotation)
+            if type_name is None:
+                raise TypeError(f"Parameter '{var_name}' must have a type annotation.")
             self.symbol_table.insert(Symbol(var_name, type_name))
 
         # Visit the function body
@@ -149,8 +161,10 @@ class SemanticAnalyzer(ast.NodeVisitor):
             type_str = node.annotation.value
             if type_str.startswith('ptr[') and type_str.endswith(']'):
                 type_name = type_str  # Keep the full 'ptr[...]' string as the type
+            elif type_str.startswith('array[') and type_str.endswith(']'):
+                type_name = type_str  # Keep the full 'array[...]' string as the type
             else:
-                raise TypeError(f"Invalid string annotation for pointer type: {type_str}")
+                raise TypeError(f"Invalid string annotation: {type_str}. Only 'ptr[...]' and 'array[...]' are supported.")
         elif isinstance(node.annotation, ast.Subscript):
             if getattr(node.annotation.value, 'id', None) != 'array':
                 raise TypeError("Only 'array' is supported for subscript type annotations.")
@@ -235,8 +249,14 @@ class SemanticAnalyzer(ast.NodeVisitor):
     def visit_Subscript(self, node):
         var_name = getattr(node.value, 'id', None)
         symbol = self.symbol_table.lookup(var_name)
-        if not symbol or not symbol.type.startswith('array['):
-            raise TypeError(f"Variable '{var_name}' is not an array and cannot be subscripted.")
+        
+        # Debug: print what we found to understand the issue
+        if not symbol:
+            raise TypeError(f"Variable '{var_name}' not found.")
+        
+        symbol_type = symbol.type
+        if not symbol_type.startswith('array['):
+            raise TypeError(f"Variable '{var_name}' is not an array and cannot be subscripted. Type: {symbol_type}")
         
         # Check that the index is an integer
         index_type = self.visit(node.slice)
@@ -244,8 +264,11 @@ class SemanticAnalyzer(ast.NodeVisitor):
             raise TypeError(f"Array index must be an integer, but got {index_type}.")
             
         # Return the base type of the array
-        match = re.match(r'array\[(\w+),(\d+)\]', symbol.type)
-        return match.group(1) if match else None
+        match = re.match(r'array\[(\w+),\s*(\d+)\]', symbol_type)
+        if match:
+            return match.group(1)
+        else:
+            raise TypeError(f"Could not parse array type: {symbol_type}")
 
     def visit_Match(self, node):
         subject_type = self.visit(node.subject)
@@ -468,6 +491,14 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 inner_type = self.visit(node.args[0])
                 return f'{func_name}[{inner_type}]'
             else:
+                # Check if this is a struct constructor call
+                struct_symbol = self.symbol_table.lookup(func_name)
+                if struct_symbol and struct_symbol.type == 'struct':
+                    # This is a struct constructor - should have no arguments for default constructor
+                    if len(node.args) != 0:
+                        raise TypeError(f"Struct constructor '{func_name}' expects no arguments, but got {len(node.args)}.")
+                    return func_name  # Return the struct type name
+                
                 # Handle user-defined function calls
                 func_symbol = self.symbol_table.lookup(func_name) # Use lookup for functions as they can be defined before use
                 if not func_symbol or func_symbol.type != 'function':

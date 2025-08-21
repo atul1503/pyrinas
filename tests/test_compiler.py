@@ -26,6 +26,11 @@ EXAMPLES = [
     ('arrays', '0\n10\n20\n30\n40\n'),
     ('structs', '10\n20.500000\n10\n30\n'),
     ('errors', '5\ndivision by zero\n'),
+    # Integration tests - combining multiple features
+    ('integration_simple', '3\n4\n25\n'),
+    ('integration_functions_arrays', '10\n14\n60\n14\n'),
+    ('integration_functions_pointers', '50\n100\n100\n50\n'),
+    ('integration_control_flow', '4\n15\n20\n'),
 ]
 
 @pytest.mark.parametrize("example, expected_output", EXAMPLES)

@@ -40,8 +40,11 @@ class CCodeGenerator(ast.NodeVisitor):
             func_symbol = self.symbol_table.lookup(node.name)
             return_type_str = func_symbol.return_type
             
+            # Handle functions without return types
+            if return_type_str is None:
+                return_type = 'void'
             # Handle Result return types
-            if return_type_str.startswith('Result['):
+            elif return_type_str.startswith('Result['):
                 return_type = 'Result'
             else:
                 return_type = self._c_type_from_pyrinas_type(return_type_str)
@@ -91,7 +94,7 @@ class CCodeGenerator(ast.NodeVisitor):
 
         # Special handling for array declarations
         if type_name.startswith('array['):
-            match = re.match(r'array\[(\w+),(\d+)\]', type_name)
+            match = re.match(r'array\[(\w+),\s*(\d+)\]', type_name)
             base_type, size = match.groups()
             c_base_type = self._c_type_from_pyrinas_type(base_type)
             self.current_code_list.append(f'{self._indent()}{c_base_type} {var_name}[{size}];')
@@ -122,6 +125,15 @@ class CCodeGenerator(ast.NodeVisitor):
         var = self.visit(node.value)
         idx = self.visit(node.slice)
         return f'{var}[{idx}]'
+    
+    def visit_Expr(self, node):
+        # Handle expression statements (like standalone function calls)
+        expr_result = self.visit(node.value)
+        if expr_result:  # Only add to code if there's a result
+            # If it's a function call that doesn't return anything (like print or assign),
+            # it will have been added to current_code_list already, so don't add it again
+            if not expr_result.strip().endswith(';'):
+                self.current_code_list.append(f'{self._indent()}{expr_result};')
 
     def visit_Match(self, node):
         subject = self.visit(node.subject)
@@ -313,8 +325,15 @@ class CCodeGenerator(ast.NodeVisitor):
             # These are handled in visit_Return, here we just visit the value
             return self.visit(node.args[0])
         else:
-            args_str = ', '.join([self.visit(arg) for arg in node.args])
-            return f'{node.func.id}({args_str})'
+            # Check if this is a struct constructor call
+            struct_symbol = self.symbol_table.lookup(node.func.id)
+            if struct_symbol and struct_symbol.type == 'struct':
+                # This is a struct constructor - initialize with zero values
+                return f'{{0}}'  # C struct zero initializer
+            else:
+                # Regular function call
+                args_str = ', '.join([self.visit(arg) for arg in node.args])
+                return f'{node.func.id}({args_str})'
             
     def visit_Return(self, node):
         if isinstance(node.value, ast.Call) and getattr(node.value.func, 'id', None) in ('Ok', 'Err'):
@@ -342,6 +361,14 @@ class CCodeGenerator(ast.NodeVisitor):
         if type_str.startswith('ptr[') and type_str.endswith(']'):
             base_type = type_str[4:-1]
             return self._c_type_from_pyrinas_type(base_type) + '*'
+        elif type_str.startswith('array[') and type_str.endswith(']'):
+            # For function parameters, arrays are passed as pointers in C
+            match = re.match(r'array\[(\w+),\s*(\d+)\]', type_str)
+            if match:
+                base_type = match.group(1)
+                return self._c_type_from_pyrinas_type(base_type) + '*'
+            else:
+                raise TypeError(f"Invalid array type format: {type_str}")
         else:
             c_type = {'int': 'int', 'float': 'float', 'bool': 'int'}.get(type_str)
             if c_type:

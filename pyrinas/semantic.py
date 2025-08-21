@@ -100,8 +100,25 @@ class SemanticAnalyzer(ast.NodeVisitor):
                 type_name = type_str  # Keep the full 'ptr[...]' string as the type
             else:
                 raise TypeError(f"Invalid string annotation for pointer type: {type_str}")
+        elif isinstance(node.annotation, ast.Subscript):
+            if getattr(node.annotation.value, 'id', None) != 'array':
+                raise TypeError("Only 'array' is supported for subscript type annotations.")
+            
+            # The slice for an array annotation should be a tuple of (type, size)
+            if not isinstance(node.annotation.slice, ast.Tuple) or len(node.annotation.slice.elts) != 2:
+                raise TypeError("Array annotation requires a tuple of [type, size].")
+            
+            base_type_node = node.annotation.slice.elts[0]
+            size_node = node.annotation.slice.elts[1]
+            
+            base_type = getattr(base_type_node, 'id', None)
+            if not isinstance(size_node, ast.Constant) or not isinstance(size_node.value, int):
+                raise TypeError("Array size must be an integer literal.")
+            size = size_node.value
+
+            type_name = f'array[{base_type},{size}]'
         else:
-            raise TypeError("Type annotation must be a name or a pointer string.")
+            raise TypeError("Type annotation must be a name, a pointer string, or an array annotation.")
 
         if self.symbol_table.lookup_current_scope(var_name):
             raise NameError(f"Variable '{var_name}' already declared in this scope.")
@@ -143,6 +160,22 @@ class SemanticAnalyzer(ast.NodeVisitor):
 
         # Comparison operations always result in a boolean
         return 'bool'
+
+    def visit_Subscript(self, node):
+        var_name = getattr(node.value, 'id', None)
+        symbol = self.symbol_table.lookup(var_name)
+        if not symbol or not symbol.type.startswith('array['):
+            raise TypeError(f"Variable '{var_name}' is not an array and cannot be subscripted.")
+        
+        # Check that the index is an integer
+        index_type = self.visit(node.slice)
+        if index_type != 'int':
+            raise TypeError(f"Array index must be an integer, but got {index_type}.")
+            
+        # Return the base type of the array
+        import re
+        match = re.match(r'array\[(\w+),(\d+)\]', symbol.type)
+        return match.group(1) if match else None
 
     def visit_BoolOp(self, node):
         # All operands must be boolean

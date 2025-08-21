@@ -1,4 +1,5 @@
 import ast
+import re
 
 class CCodeGenerator(ast.NodeVisitor):
     def __init__(self, symbol_table):
@@ -54,8 +55,24 @@ class CCodeGenerator(ast.NodeVisitor):
             type_name = node.annotation.id
         elif isinstance(node.annotation, ast.Constant) and isinstance(node.annotation.value, str):
             type_name = node.annotation.value
+        elif isinstance(node.annotation, ast.Subscript):
+             if getattr(node.annotation.value, 'id', None) == 'array':
+                base_type_node = node.annotation.slice.elts[0]
+                size_node = node.annotation.slice.elts[1]
+                base_type = getattr(base_type_node, 'id', None)
+                size = size_node.value
+                type_name = f'array[{base_type},{size}]'
         else:
             raise TypeError("Unsupported type annotation for code generation.")
+
+        # Special handling for array declarations
+        if type_name.startswith('array['):
+            match = re.match(r'array\[(\w+),(\d+)\]', type_name)
+            base_type, size = match.groups()
+            c_base_type = self._c_type_from_pyrinas_type(base_type)
+            self.current_code_list.append(f'{self._indent()}{c_base_type} {var_name}[{size}];')
+            self.local_vars[var_name] = type_name
+            return
 
         c_type = self._c_type_from_pyrinas_type(type_name)
         
@@ -71,6 +88,11 @@ class CCodeGenerator(ast.NodeVisitor):
         target = self.visit(node.targets[0])
         value = self.visit(node.value)
         self.current_code_list.append(f'{self._indent()}{target} = {value};')
+
+    def visit_Subscript(self, node):
+        var = self.visit(node.value)
+        idx = self.visit(node.slice)
+        return f'{var}[{idx}]'
 
     def visit_Name(self, node):
         return node.id

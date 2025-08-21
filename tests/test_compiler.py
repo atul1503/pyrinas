@@ -23,6 +23,7 @@ EXAMPLES = [
     ('pointers', '42\n100\n'),
     ('multilevel_pointers', '42\n100\n50\n'),
     ('memory', '255\n'),
+    ('arrays', '0\n10\n20\n30\n40\n'),
 ]
 
 @pytest.mark.parametrize("example, expected_output", EXAMPLES)
